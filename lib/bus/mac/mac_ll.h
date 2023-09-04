@@ -5,14 +5,15 @@
 // #include <queue> 
 #include <driver/gpio.h> 
 #include <esp_idf_version.h>
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-  #include <hal/gpio_ll.h>
-#endif
+//#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+#include <hal/gpio_ll.h>
+//#endif
+#include <driver/rmt_tx.h>
 // #include <driver/spi_master.h>
 // #include <freertos/semphr.h> 
 
 #include "../../include/pinmap.h"
-#include "fnRMTstream.h"
+
 
 // // #define SPI_II_LEN 27000        // 200 ms at 1 mbps for disk ii + some extra
 #define TRACK_LEN 10000              // guess for MOOF - should probably read it from MOOF file          
@@ -23,7 +24,8 @@
 // #define PACKET_TYPE_STATUS 0x81
 // #define PACKET_TYPE_DATA 0x82
 
-#define RMT_TX_CHANNEL rmt_channel_t::RMT_CHANNEL_0
+// #define RMT_TX_CHANNEL rmt_channel_t::RMT_CHANNEL_0
+#define RMT_MEM_BLOCK_SIZE 64
 
 // extern volatile uint8_t _phases;
 // extern volatile int isrctr;
@@ -170,7 +172,9 @@ class mac_floppy_ll : public mac_ll
 {
 private:
   // RMT data handling
-  fn_rmt_config_t config;
+  rmt_tx_channel_config_t tx_chan_config;
+  rmt_channel_handle_t tx_chan[2];
+  rmt_transmit_config_t transmit_config[2];
 
   // track bit information
   uint8_t *track_buffer[2] = {nullptr, nullptr}; //

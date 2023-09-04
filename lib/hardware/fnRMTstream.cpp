@@ -1,3 +1,4 @@
+#ifndef BUILD_MAC
 // copied from ~/.platformio/packages/framework-espidf/components/driver
 // renamed fnRMT.cpp from rmt.c
 // did some typecasting on channel to make it pass cpp compilation
@@ -1124,3 +1125,4 @@ esp_err_t rmtStream::rmt_get_channel_status(rmt_channel_status_result_t *channel
 }
 
 rmtStream fnRMT;
+#endif // not BUILD_MAC

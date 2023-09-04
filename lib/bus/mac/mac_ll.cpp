@@ -808,14 +808,16 @@ void mac_floppy_ll::start(uint8_t drive)
 {
   // floppy_ll.set_output_to_rmt();
   // floppy_ll.enable_output();
-  ESP_ERROR_CHECK(fnRMT.rmt_write_bitstream(RMT_TX_CHANNEL, track_buffer[0], track_numbits[0], track_bit_period));
+  //ESP_ERROR_CHECK(fnRMT.rmt_write_bitstream(RMT_TX_CHANNEL, track_buffer[0], track_numbits[0], track_bit_period));
+  ESP_ERROR_CHECK(rmt_transmit(tx_chan[0],encode_rmt_bitstream,track_buffer[0],RMT_MEM_BLOCK_SIZE,&transmit_config[0]));
   fnLedManager.set(LED_BUS, true);
   Debug_printf("\nstart floppy %d : ",drive+1);
 }
 
 void mac_floppy_ll::stop()
 {
-  fnRMT.rmt_tx_stop(RMT_TX_CHANNEL);
+  //fnRMT.rmt_tx_stop(RMT_TX_CHANNEL);
+  ESP_ERROR_CHECK(rmt_disable(tx_chan[0]));
   // floppy_ll.disable_output();
   fnLedManager.set(LED_BUS, false);
   Debug_printf("\nstop floppy");
@@ -856,8 +858,9 @@ void mac_floppy_ll::stop()
 // }
 
 //Convert track data to rmt format data.
-void IRAM_ATTR encode_rmt_bitstream(const void* src, rmt_item32_t* dest, size_t src_size,
-                         size_t wanted_num, size_t* translated_size, size_t* item_num, int bit_period)
+size_t IRAM_ATTR encode_rmt_bitstream(rmt_encoder_t *encoder, rmt_channel_handle_t channel, const void *primary_data, size_t data_size, rmt_encode_state_t *ret_state)
+// void IRAM_ATTR encode_rmt_bitstream(const void* src, rmt_item32_t* dest, size_t src_size,
+//                          size_t wanted_num, size_t* translated_size, size_t* item_num, int bit_period)
 {
     // *src is equal to *track_buffer
     // src_size is equal to numbits
@@ -911,7 +914,7 @@ void IRAM_ATTR encode_rmt_bitstream(const void* src, rmt_item32_t* dest, size_t 
  */
 void mac_floppy_ll::setup_rmt()
 {
-#define RMT_TX_CHANNEL rmt_channel_t::RMT_CHANNEL_0
+  // these are the source data for the next_bit() function that is called from the RMT encoder
   track_buffer[0] = (uint8_t *)heap_caps_malloc(TRACK_LEN, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (track_buffer[0] == NULL)
     Debug_println("could not allocate track buffer 0");
@@ -919,26 +922,46 @@ void mac_floppy_ll::setup_rmt()
   if (track_buffer[1] == NULL)
     Debug_println("could not allocate track buffer 1");
 
-  config.rmt_mode = rmt_mode_t::RMT_MODE_TX;
-  config.channel = RMT_TX_CHANNEL;
-#ifdef RMTTEST
-  config.gpio_num = (gpio_num_t)SP_EXTRA;
-#else
-  if(fnSystem.spifix())
-    config.gpio_num = (gpio_num_t)SP_SPI_FIX_PIN; 
-  else
-    config.gpio_num = (gpio_num_t)PIN_SD_HOST_MOSI; 
-#endif
-  config.mem_block_num = 1;
-  config.tx_config.loop_en = false;
-  config.tx_config.carrier_en = false;
-  config.tx_config.idle_output_en = true;
-  config.tx_config.idle_level = rmt_idle_level_t::RMT_IDLE_LEVEL_LOW;
-  config.clk_div = 1; // use full 80 MHz resolution of APB clock
+/**
+ * The new RMT driver from IDF V6 (latest as of 9/3/23) needs some things:
+ * rmt_tx_channel_config_t
+ * 
+*/
 
-  ESP_ERROR_CHECK(fnRMT.rmt_config(&config));
-  ESP_ERROR_CHECK(fnRMT.rmt_driver_install(config.channel, 0, ESP_INTR_FLAG_IRAM));
-  ESP_ERROR_CHECK(fnRMT.rmt_translator_init(config.channel, encode_rmt_bitstream));
+tx_chan[0] = NULL;
+tx_chan_config = {
+    .gpio_num = PIN_HEAD_0,                    // GPIO number
+    .clk_src = RMT_CLK_SRC_DEFAULT,   // select source clock
+    .resolution_hz = 80 * 1000 * 1000, // 1 MHz tick resolution, i.e., 1 tick = 1 µs
+    .mem_block_symbols = RMT_MEM_BLOCK_SIZE,          // memory block size, 64 * 4 = 256 Bytes
+    .trans_queue_depth = 4,           // set the number of transactions that can pend in the background
+    .flags = {
+      .invert_out = false,        // do not invert output signal
+      .with_dma = false,          // do not need DMA backend
+      .io_loop_back = false,
+      .io_od_mode = false
+    }
+};
+ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_config, &tx_chan[0]));
+tx_chan_config.gpio_num = PIN_HEAD_1;
+ESP_ERROR_CHECK(rmt_new_tx_channel(&tx_chan_config, &tx_chan[1]));
+
+transmit_config[0] = {
+  .loop_count = -1,
+  .flags = {
+    .eot_level = DIGI_LOW
+  }
+};
+
+// to do - still need to create an encoder (see musical_score_encoder_config_t)
+// then enable
+// i'm not sure how to make it just go infinitely
+// 
+
+
+  // ESP_ERROR_CHECK(fnRMT.rmt_config(&config));
+  // ESP_ERROR_CHECK(fnRMT.rmt_driver_install(config.channel, 0, ESP_INTR_FLAG_IRAM));
+  // ESP_ERROR_CHECK(fnRMT.rmt_translator_init(config.channel, encode_rmt_bitstream));
 }
 
 bool IRAM_ATTR mac_floppy_ll::nextbit()

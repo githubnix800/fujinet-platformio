@@ -69,5 +69,9 @@
 #endif // MASTERIES_SPI_FIX
 
 #define SP_EXTRA                SP_DRIVE2 // For extra debugging with logic analyzer
+
+#define PIN_HEAD_0      GPIO_NUM_14
+#define PIN_HEAD_1      GPIO_NUM_26
+
 #endif /* PINMAP_MAC_REV0 */
 
