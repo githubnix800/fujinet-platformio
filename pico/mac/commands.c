@@ -15,6 +15,7 @@
 #include "hardware/uart.h"
 #include "hardware/clocks.h"
 #include "hardware/claim.h"
+#include "hardware/dma.h"
 
 #include "hardware/pio.h"
 #include "hardware/pio_instructions.h"
@@ -76,7 +77,9 @@ void pio_dcd_read(PIO pio, uint sm, uint offset, uint pin);
 void pio_dcd_write(PIO pio, uint sm, uint offset, uint pin);
 void set_num_dcd();
 
-
+//DMA 
+int chan[5];
+dma_channel_config dmac[5];
 
 /**
  * HERE IS UART SETUP
@@ -181,6 +184,12 @@ enum latch_bits {
 uint16_t latch;
 uint8_t dcd_latch;
 
+uint16_t latch_out;
+
+uint8_t latch_msb[5] __attribute__ ((aligned (256)));
+uint8_t latch_lsb[5] __attribute__ ((aligned (256)));
+
+
 inline uint16_t get_latch() { return latch; }
 inline uint16_t dcd_get_latch() { return ((dcd_latch << 8) + dcd_latch); }
 
@@ -211,7 +220,7 @@ void dcd_deassert_hshk()
 void preset_latch()
 {
   // set up like an empty floppy
-    latch =-1;
+    latch = -1;
     // clr_latch(DIRTN);
     // set_latch(STEP);
     // set_latch(MOTORON);
@@ -372,32 +381,115 @@ void setup()
     printf("Loaded DCD mux program at %d\n", pio_mux_offset);
     pio_dcd_mux(pioblk_rw, SM_MUX, pio_mux_offset, LATCH_OUT);
 
+    // following is how to load in floppy mux - this is done in switch_to_floppy()
     // pio_mux_offset = pio_add_program(pioblk_rw, &mux_program);
     // printf("Loaded Floppy mux program at %d\n", pio_mux_offset);
     // pio_mux(pioblk_rw, SM_MUX, pio_mux_offset, MCI_CA0, ECHO_OUT);
 
-#ifdef FLOPPY
-    set_tach_freq(0); // start TACH clock
-    preset_latch();
+    // setup DMA for latch switching
+    // problem: it takes too long to switch out DCD and floppy latch values programmatically based on the DCD mux detector
+    // proposed solution: have DCD mux trigger a DMA chain that pushes the correct  value to the latch PIO
+    // chained DMA operations:
+    // DCD mux output (autopull) triggers DMA 0
+    // DMA 0 moves the PIO output to the LSB of the DMA 1 read address (act like a LUT)
+    // note: DMA 1 will copy the LSB of the latch to the LSB of 16-bit uint location
+    // DMA 0 chains to DMA 2
+    // DMA 2 copies the DMA 1 read LSB to the DMA 3 read LSB
+    // note: DMA 3 will copy the MSB of the latch to the MSB of a 16-bit uint location
+    // DMA 2 chains to DMA 1
+    // DMA 1 chains to DMA 3
+    // DMA 3 chains to DMA 4
+    // DMA 4 copies the 16 bit uint to the input FIFO of the latch PIO
+    //
+    // TODO: maybe can READ_ADDR_TRIG DMA1 and DMA3 so don't to chain so much?
+    //
+    // that's 5 DMA operations or 5-10(?) cycles = 40 to 80 ns
+    //
+    // set up the DMAs
+    // channel_config_set_read_increment(&c, true);
+    // channel_config_set_write_increment(&c, false);
+    // channel_config_set_dreq(&c, DREQ_FORCE);
+    // channel_config_set_chain_to(&c, channel);
+    // channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+    // channel_config_set_ring(&c, false, 0);
+    // channel_config_set_bswap(&c, false);
+    // channel_config_set_irq_quiet(&c, false);
+    // channel_config_set_enable(&c, true);
+    // channel_config_set_sniff_enable(&c, false);
+    // channel_config_set_high_priority( &c, false);
 
-    offset = pio_add_program(pio_floppy, &commands_program);
-    printf("\nLoaded cmd program at %d\n", offset);
-    pio_commands(pio_floppy, SM_FPY_CMD, offset, MCI_CA0); // read phases starting on pin 8
-    
-    offset = pio_add_program(pio_floppy, &echo_program);
-    printf("Loaded echo program at %d\n", offset);
-    pio_echo(pio_floppy, SM_FPY_ECHO, offset, ECHO_IN, ECHO_OUT, 2);
-    
-    offset = pio_add_program(pio_floppy, &latch_program);
-    printf("Loaded latch program at %d\n", offset);
-    pio_latch(pio_floppy, SM_LATCH, offset, MCI_CA0, LATCH_OUT);
-    pio_sm_put_blocking(pio_floppy, SM_LATCH, get_latch()); // send the register word to the PIO         
-    
-    offset = pio_add_program(pio_floppy, &mux_program);
-    printf("Loaded mux program at %d\n", offset);
-    pio_mux(pio_floppy, SM_MUX, offset, MCI_CA0, ECHO_OUT);
+    for (int i=0; i<5; i++)
+    {
+      chan[i] = dma_claim_unused_channel(true);
+      dmac[i] = dma_channel_get_default_config(chan[i]);
+    }
 
-#endif // FLOPPY
+    // DMA 0 copies the MUX RX FIFO TO the READ ADDR of DMA 1
+    channel_config_set_read_increment(&dmac[0],false);
+    channel_config_set_write_increment(&dmac[0],false);
+    channel_config_set_dreq(&dmac[0], DREQ_PIO1_RX3); // mux PIO
+    channel_config_set_chain_to(&dmac[0], chan[2]);
+    channel_config_set_transfer_data_size(&dmac[0],DMA_SIZE_8);
+    channel_config_set_irq_quiet(&dmac[0], true);
+    dma_channel_configure(
+        chan[0],                            // Channel to be configured
+        &dmac[0],                           // The configuration we just created
+        &dma_hw->ch[chan[1]].al1_read_addr, // The initial write address
+        &pio1_hw->rxf[3],                   // The initial read address
+        1,                                  // Number of transfers; in this case each is 1 byte.
+        false                               // do not Start immediately.      
+      );
+
+    // DMA 1 copies the latch value to the LSB of the latch target
+    channel_config_set_read_increment(&dmac[1],false);
+    channel_config_set_write_increment(&dmac[1],false);
+    //channel_config_set_dreq(&dmac[0], DREQ_PIO1_RX3); // mux PIO
+    channel_config_set_chain_to(&dmac[1], chan[3]);
+    channel_config_set_transfer_data_size(&dmac[1],DMA_SIZE_8);
+    channel_config_set_irq_quiet(&dmac[1], true);
+    dma_channel_configure(
+        chan[1],                            // Channel to be configured
+        &dmac[1],                           // The configuration we just created
+        &latch_out,                         // The initial write address
+        &latch_lsb[0],                      // The initial read address
+        1,                                  // Number of transfers; in this case each is 1 byte.
+        false                               // do not Start immediately.      
+      );
+
+    // DMA 2 copies the DMA 1 read LSB to the DMA 3 read LSB
+    channel_config_set_read_increment(&dmac[2], false);
+    channel_config_set_write_increment(&dmac[2],false);
+    //channel_config_set_dreq(&dmac[0], DREQ_PIO1_RX3); // mux PIO
+    channel_config_set_chain_to(&dmac[2], chan[1]);
+    channel_config_set_transfer_data_size(&dmac[2],DMA_SIZE_8);
+    channel_config_set_irq_quiet(&dmac[2], true);
+    dma_channel_configure(
+        chan[2],                            // Channel to be configured
+        &dmac[2],                           // The configuration we just created
+        &dma_hw->ch[chan[3]].al1_read_addr, // The initial write address
+        &dma_hw->ch[chan[1]].al1_read_addr, // The initial read address
+        1,                                  // Number of transfers; in this case each is 1 byte.
+        false                               // do not Start immediately.      
+      );
+
+    // DMA 3 will copy the MSB of the latch to the MSB of a 16-bit uint location
+    channel_config_set_read_increment(&dmac[3],false);
+    channel_config_set_write_increment(&dmac[3],false);
+    //channel_config_set_dreq(&dmac[0], DREQ_PIO1_RX3); // mux PIO
+    channel_config_set_chain_to(&dmac[3], chan[4]);
+    channel_config_set_transfer_data_size(&dmac[3],DMA_SIZE_8);
+    channel_config_set_irq_quiet(&dmac[3], true);
+    dma_channel_configure(
+        chan[3],                            // Channel to be configured
+        &dmac[3],                           // The configuration we just created
+        &latch_out + 1,                     // The initial write address
+        &latch_msb[0],                      // The initial read address
+        1,                                  // Number of transfers; in this case each is 1 byte.
+        false                               // do not Start immediately.      
+      );
+
+
+
 }
 
 void dcd_loop();
