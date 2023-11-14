@@ -80,6 +80,8 @@ void set_num_dcd();
 //DMA 
 int chan[5];
 dma_channel_config dmac[5];
+int ch_mux[2];
+dma_channel_config cfg_mux[2];
 
 /**
  * HERE IS UART SETUP
@@ -186,9 +188,29 @@ uint8_t dcd_latch;
 
 uint16_t latch_out;
 
-uint8_t latch_msb[5] __attribute__ ((aligned (256)));
-uint8_t latch_lsb[5] __attribute__ ((aligned (256)));
+// uint8_t latch_msb[5] __attribute__ ((aligned (256)));
+// uint8_t latch_lsb[5] __attribute__ ((aligned (256)));
 
+_Alignas(256) uint8_t latch_msb[5];
+_Alignas(256) uint8_t latch_lsb[5];
+_Alignas(256)  uint8_t mux_table[16] = {
+    0b100, // 0000
+    0b100, // 0001
+    0b100, // 0010
+    0b100, // 0011
+    0b010, // 0100  RD DATA
+    0b100, // 0101
+    0b100, // 0110
+    0b100, // 0111
+    0b100, // 1000
+    0b100, // 1001
+    0b100, // 1010
+    0b001, // 1011  TACH
+    0b010, // 1100  RD DATA
+    0b100, // 1101
+    0b100, // 1110
+    0b100  // 1111
+};
 
 inline uint16_t get_latch() { return latch; }
 inline uint16_t dcd_get_latch() { return ((dcd_latch << 8) + dcd_latch); }
@@ -207,6 +229,7 @@ void dcd_assert_hshk()
 {                   // State	CA2	  CA1	  CA0	  HOST	HOFF	RESET	RD Function
   dcd_clr_latch(2); // 2	    Low	  High	Low	  Low	  Low	  Low	  !HSHK
   dcd_clr_latch(3); // 3	    Low	  High	High	High	Low	  Low	  !HSHK
+      // todo - replace with a DMA trigger 
   pio_sm_put_blocking(pioblk_rw, SM_LATCH, dcd_get_latch()); // send the register word to the PIO
 }
 
@@ -214,6 +237,7 @@ void dcd_deassert_hshk()
 {                   // State	CA2	  CA1	  CA0	  HOST	HOFF	RESET	RD Function
   dcd_set_latch(2); // 2	    Low	  High	Low	  Low	  Low	  Low	  !HSHK
   dcd_set_latch(3); // 3	    Low	  High	High	High	Low	  Low	  !HSHK
+      // todo - replace with a DMA trigger 
   pio_sm_put_blocking(pioblk_rw, SM_LATCH, dcd_get_latch()); // send the register word to the PIO
 }
 
@@ -274,13 +298,20 @@ void set_tach_freq(char c)
 
 void switch_to_floppy()
 {
+  // printf("\nswitch to floppy\n");
   // latch
+  // todo - replace with a DMA trigger - or remove because DMA already took care of it
   pio_sm_put_blocking(pioblk_rw, SM_LATCH, get_latch()); // send the register word to the PIO 
-
+  
+ 
   // mux
   pio_remove_program(pioblk_rw, &dcd_mux_program, pio_mux_offset);
   pio_add_program_at_offset(pioblk_rw, &mux_program, pio_mux_offset);
   pio_mux(pioblk_rw, SM_MUX, pio_mux_offset, MCI_CA0, ECHO_OUT);
+
+  // channel_config_set_enable(&cfg_mux[1], true);
+  // channel_config_set_enable(&cfg_mux[0], true);
+  dma_start_channel_mask((1 << ch_mux[0]) | (1 << ch_mux[1]));
 
   // commands
   while (gpio_get(LSTRB));  
@@ -295,6 +326,7 @@ void switch_to_floppy()
 void switch_to_dcd()
 {
   // latch
+      // todo - replace with a DMA trigger 
   pio_sm_put_blocking(pioblk_rw, SM_LATCH, dcd_get_latch()); // send the register word to the PIO 
 
   // commands
@@ -302,6 +334,8 @@ void switch_to_dcd()
   pio_dcd_commands(pioblk_read_only, SM_DCD_CMD, pio_dcd_cmd_offset, MCI_CA0); // read phases starting on pin 8
 
   // mux
+  channel_config_set_enable(&cfg_mux[1], false);
+  channel_config_set_enable(&cfg_mux[0], false);
   pio_remove_program(pioblk_rw, &mux_program, pio_mux_offset);
   pio_add_program_at_offset(pioblk_rw, &dcd_mux_program, pio_mux_offset);
   pio_dcd_mux(pioblk_rw, SM_MUX, pio_mux_offset, LATCH_OUT);
@@ -326,6 +360,11 @@ void set_num_dcd()
 void setup()
 {
   uint offset;
+
+    for (int i=0; i<16; i++)
+    mux_table[i]=1;
+
+    num_dcd_drives = 0;
 
     stdio_init_all();
     setup_default_uart();
@@ -367,6 +406,7 @@ void setup()
     offset = pio_add_program(pioblk_rw, &latch_program);
     printf("\nLoaded latch program at %d\n", offset);
     pio_latch(pioblk_rw, SM_LATCH, offset, MCI_CA0, LATCH_OUT);
+    // todo - replace with a DMA trigger 
     pio_sm_put_blocking(pioblk_rw, SM_LATCH, dcd_get_latch()); // send the register word to the PIO 
 
     offset = pio_add_program(pioblk_rw, &echo_program);
@@ -385,6 +425,58 @@ void setup()
     // pio_mux_offset = pio_add_program(pioblk_rw, &mux_program);
     // printf("Loaded Floppy mux program at %d\n", pio_mux_offset);
     // pio_mux(pioblk_rw, SM_MUX, pio_mux_offset, MCI_CA0, ECHO_OUT);
+
+    // MUX for floppy
+    // implement as a DMA LUT for PIO
+    // PIO1, SM3
+    //
+    // first DMA reads from the RX FIFO and writes to the read addr of the second DMA
+    // second DMA reads from the table and writes to the TX FIFO
+    //
+
+    ch_mux[0] = dma_claim_unused_channel(true);
+    cfg_mux[0] = dma_channel_get_default_config(ch_mux[0]);
+
+    ch_mux[1] = dma_claim_unused_channel(true);
+    cfg_mux[1] = dma_channel_get_default_config(ch_mux[1]);
+
+    channel_config_set_read_increment(&cfg_mux[0],false);
+    channel_config_set_write_increment(&cfg_mux[0],false);
+    channel_config_set_dreq(&cfg_mux[0], DREQ_PIO1_RX3); // mux PIO
+    channel_config_set_chain_to(&cfg_mux[0], ch_mux[1]);
+    channel_config_set_transfer_data_size(&cfg_mux[0], DMA_SIZE_8);
+    channel_config_set_irq_quiet(&cfg_mux[0], true);
+    channel_config_set_enable(&cfg_mux[0], false);
+    dma_channel_configure(
+        ch_mux[0],                          // Channel to be configured
+        &cfg_mux[0],                        // The configuration we just created
+        &dma_hw->ch[ch_mux[1]].read_addr,   // The initial write address
+        &pio1_hw->rxf[3],                   // The initial read address
+        1,                                  // Number of transfers; in this case each is 1 byte.
+        false                               // do not Start immediately.      
+      );
+
+    channel_config_set_read_increment(&cfg_mux[1],false);
+    channel_config_set_write_increment(&cfg_mux[1],false);
+    channel_config_set_dreq(&cfg_mux[1], DREQ_PIO1_TX3); // mux PIO
+    //    channel_config_set_chain_to(&cfg_mux[0], ch_mux[1]);
+    channel_config_set_transfer_data_size(&cfg_mux[1], DMA_SIZE_8);
+    channel_config_set_irq_quiet(&cfg_mux[1], true);
+    channel_config_set_enable(&cfg_mux[1], false);
+    dma_channel_configure(
+        ch_mux[1],                          // Channel to be configured
+        &cfg_mux[1],                        // The configuration we just created
+        &pio1_hw->txf[3],                   // The initial write address
+        &mux_table[0],                      // The initial read address
+        1,                                  // Number of transfers; in this case each is 1 byte.
+        false                               // do not Start immediately.      
+      );
+
+
+    // create DMA that reads 4-bit phases from mux PIO and writes 3 bit value (1 byte) to TX FIFO, which MUX applies to pindirs
+
+    return;
+    // skip all this for now
 
     // setup DMA for latch switching
     // problem: it takes too long to switch out DCD and floppy latch values programmatically based on the DCD mux detector
@@ -488,7 +580,7 @@ void setup()
         false                               // do not Start immediately.      
       );
 
-
+  // DMA 4 copies the 16 bit uint to the input FIFO of the latch PIO
 
 }
 
@@ -572,6 +664,7 @@ void floppy_loop()
 
   if (gpio_get(ENABLE) && (num_dcd_drives > 0))
   {
+        // todo - replace with a DMA trigger 
     pio_sm_put_blocking(pioblk_rw, SM_LATCH, dcd_get_latch()); // send the register word to the PIO 
     disk_mode = TO_DCD;
     return;
@@ -638,6 +731,7 @@ void floppy_loop()
       printf("\nUNKNOWN PHASE COMMAND");
       break;
       }
+          // todo - replace with a DMA trigger 
     pio_sm_put_blocking(pioblk_rw, SM_LATCH, get_latch()); // send the register word to the PIO
     uart_putc_raw(UART_ID, (char)(a + '0'));
     }
@@ -692,6 +786,7 @@ void floppy_loop()
           break;
       }
       // printf("latch %04x", get_latch());
+          // todo - replace with a DMA trigger 
       pio_sm_put_blocking(pioblk_rw, SM_LATCH, get_latch()); // send the register word to the PIO
       c = 0; // clear c because processed it and don't want infinite loop
     }
@@ -730,6 +825,7 @@ void dcd_loop()
     else
     {
       // if (!latch_val(CSTIN))
+          // todo - replace with a DMA trigger 
       pio_sm_put_blocking(pioblk_rw, SM_LATCH, latch); // send the register word to the PIO 
       disk_mode = TO_FPY;
       return;
