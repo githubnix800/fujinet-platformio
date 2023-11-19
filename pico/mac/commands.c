@@ -298,20 +298,64 @@ void set_tach_freq(char c)
 
 void switch_to_floppy()
 {
-  // printf("\nswitch to floppy\n");
+  printf("\nswitch to floppy\n");
   // latch
   // todo - replace with a DMA trigger - or remove because DMA already took care of it
-  pio_sm_put_blocking(pioblk_rw, SM_LATCH, get_latch()); // send the register word to the PIO 
+  // pio_sm_put_blocking(pioblk_rw, SM_LATCH, get_latch()); // send the register word to the PIO 
   
- 
-  // mux
-  pio_remove_program(pioblk_rw, &dcd_mux_program, pio_mux_offset);
-  pio_add_program_at_offset(pioblk_rw, &mux_program, pio_mux_offset);
-  pio_mux(pioblk_rw, SM_MUX, pio_mux_offset, MCI_CA0, ECHO_OUT);
 
-  // channel_config_set_enable(&cfg_mux[1], true);
-  // channel_config_set_enable(&cfg_mux[0], true);
-  dma_start_channel_mask((1 << ch_mux[0]) | (1 << ch_mux[1]));
+  // mux
+  // pio_remove_program(pioblk_rw, &dcd_mux_program, pio_mux_offset);
+  // pio_add_program_at_offset(pioblk_rw, &mux_program, pio_mux_offset);
+
+
+  // pio_mux(pioblk_rw, SM_MUX, pio_mux_offset, MCI_CA0, ECHO_OUT);
+    mux_program_init(pioblk_rw, SM_MUX, pio_mux_offset, MCI_CA0, ECHO_OUT);
+    
+    pio_sm_put_blocking(pioblk_rw, SM_MUX, (uint32_t)(&mux_table[0])>>4);
+
+    pio_sm_set_enabled(pioblk_rw, SM_MUX, true);
+
+    ch_mux[0] = dma_claim_unused_channel(true);
+    cfg_mux[0] = dma_channel_get_default_config(ch_mux[0]);
+
+    ch_mux[1] = dma_claim_unused_channel(true);
+    cfg_mux[1] = dma_channel_get_default_config(ch_mux[1]);
+ 
+    channel_config_set_read_increment(&cfg_mux[1],false);
+    channel_config_set_write_increment(&cfg_mux[1],false);
+    channel_config_set_dreq(&cfg_mux[1], pio_get_dreq(pioblk_rw, SM_MUX, true)); // mux PIO
+    channel_config_set_chain_to(&cfg_mux[1], ch_mux[0]);
+    channel_config_set_transfer_data_size(&cfg_mux[1], DMA_SIZE_8);
+    channel_config_set_irq_quiet(&cfg_mux[1], true);
+    channel_config_set_enable(&cfg_mux[1], true);
+    dma_channel_configure(
+        ch_mux[1],                          // Channel to be configured
+        &cfg_mux[1],                        // The configuration we just created
+        &pioblk_rw->txf[SM_MUX],                   // The initial write address
+        mux_table,                      // The initial read address
+        1,                                  // Number of transfers; in this case each is 1 byte.
+        false                               // do not Start immediately.      
+      );
+
+   channel_config_set_read_increment(&cfg_mux[0],false);
+    channel_config_set_write_increment(&cfg_mux[0],false);
+    channel_config_set_dreq(&cfg_mux[0], pio_get_dreq(pioblk_rw, SM_MUX, false)); // mux PIO
+    channel_config_set_chain_to(&cfg_mux[0], ch_mux[1]);
+    channel_config_set_transfer_data_size(&cfg_mux[0], DMA_SIZE_32);
+    channel_config_set_irq_quiet(&cfg_mux[0], true);
+    channel_config_set_enable(&cfg_mux[0], true);
+    dma_channel_configure(
+        ch_mux[0],                          // Channel to be configured
+        &cfg_mux[0],                        // The configuration we just created
+        &dma_channel_hw_addr(ch_mux[1])->read_addr,   // The initial write address
+        &pioblk_rw->rxf[SM_MUX],            // The initial read address
+        1,                                  // Number of transfers; in this case each is 1 byte.
+        true                               // do not Start immediately.      
+      );
+
+while(true);
+
 
   // commands
   while (gpio_get(LSTRB));  
@@ -361,8 +405,8 @@ void setup()
 {
   uint offset;
 
-    for (int i=0; i<16; i++)
-    mux_table[i]=1;
+    // for (int i=0; i<16; i++)
+    // mux_table[i]=0b001;
 
     num_dcd_drives = 0;
 
@@ -379,17 +423,17 @@ void setup()
      * put the read-only SM's in PIO0: floppy cmd, dcd cmd, dcd read
      * configure as if DCD is default ON
     */
-    pio_floppy_cmd_offset = pio_add_program(pioblk_read_only, &commands_program);
-    printf("\nLoaded Floppy cmd program at %d", pio_floppy_cmd_offset);
-    // pio_commands(pioblk_read_only, SM_FPY_CMD, pio_floppy_cmd_offset, MCI_CA0); // read phases starting on pin 8
+    // pio_floppy_cmd_offset = pio_add_program(pioblk_read_only, &commands_program);
+    // printf("\nLoaded Floppy cmd program at %d", pio_floppy_cmd_offset);
+    // // pio_commands(pioblk_read_only, SM_FPY_CMD, pio_floppy_cmd_offset, MCI_CA0); // read phases starting on pin 8
     
-    pio_dcd_cmd_offset = pio_add_program(pioblk_read_only, &dcd_commands_program);
-    printf("\nLoaded DCD commands program at %d", pio_dcd_cmd_offset);
-    pio_dcd_commands(pioblk_read_only, SM_DCD_CMD, pio_dcd_cmd_offset, MCI_CA0); // read phases starting on pin 8
+    // pio_dcd_cmd_offset = pio_add_program(pioblk_read_only, &dcd_commands_program);
+    // printf("\nLoaded DCD commands program at %d", pio_dcd_cmd_offset);
+    // pio_dcd_commands(pioblk_read_only, SM_DCD_CMD, pio_dcd_cmd_offset, MCI_CA0); // read phases starting on pin 8
 
-    pio_read_offset = pio_add_program(pioblk_read_only, &dcd_read_program);
-    printf("\nLoaded DCD read program at %d\n", pio_read_offset);
-    pio_dcd_read(pioblk_read_only, SM_DCD_READ, pio_read_offset, MCI_WR);
+    // pio_read_offset = pio_add_program(pioblk_read_only, &dcd_read_program);
+    // printf("\nLoaded DCD read program at %d\n", pio_read_offset);
+    // pio_dcd_read(pioblk_read_only, SM_DCD_READ, pio_read_offset, MCI_WR);
 
     /** 
      * put the output SM's in PIO1: echo, dcd write, common latch
@@ -403,23 +447,24 @@ void setup()
      * SET and side-set), or for one state  machine to change a GPIO’s 
      * direction while another changes that GPIO’s level.
     */
-    offset = pio_add_program(pioblk_rw, &latch_program);
-    printf("\nLoaded latch program at %d\n", offset);
-    pio_latch(pioblk_rw, SM_LATCH, offset, MCI_CA0, LATCH_OUT);
-    // todo - replace with a DMA trigger 
-    pio_sm_put_blocking(pioblk_rw, SM_LATCH, dcd_get_latch()); // send the register word to the PIO 
+    // offset = pio_add_program(pioblk_rw, &latch_program);
+    // printf("\nLoaded latch program at %d\n", offset);
+    // pio_latch(pioblk_rw, SM_LATCH, offset, MCI_CA0, LATCH_OUT);
+    // // todo - replace with a DMA trigger 
+    // pio_sm_put_blocking(pioblk_rw, SM_LATCH, dcd_get_latch()); // send the register word to the PIO 
 
     offset = pio_add_program(pioblk_rw, &echo_program);
     printf("Loaded floppy echo program at %d\n", offset);
     pio_echo(pioblk_rw, SM_FPY_ECHO, offset, ECHO_IN, ECHO_OUT, 2);
 
-    pio_write_offset = pio_add_program(pioblk_rw, &dcd_write_program);
-    printf("Loaded DCD write program at %d\n", pio_write_offset);
-    pio_dcd_write(pioblk_rw, SM_DCD_WRITE, pio_write_offset, LATCH_OUT);
+    // pio_write_offset = pio_add_program(pioblk_rw, &dcd_write_program);
+    // printf("Loaded DCD write program at %d\n", pio_write_offset);
+    // pio_dcd_write(pioblk_rw, SM_DCD_WRITE, pio_write_offset, LATCH_OUT);
 
-    pio_mux_offset = pio_add_program(pioblk_rw, &dcd_mux_program);
-    printf("Loaded DCD mux program at %d\n", pio_mux_offset);
-    pio_dcd_mux(pioblk_rw, SM_MUX, pio_mux_offset, LATCH_OUT);
+    pio_mux_offset = pio_add_program(pioblk_rw, &mux_program);
+    // pio_mux_offset = pio_add_program(pioblk_rw, &dcd_mux_program);
+    printf("Loaded mux program at %d\n", pio_mux_offset);
+    // pio_dcd_mux(pioblk_rw, SM_MUX, pio_mux_offset, LATCH_OUT);
 
     // following is how to load in floppy mux - this is done in switch_to_floppy()
     // pio_mux_offset = pio_add_program(pioblk_rw, &mux_program);
@@ -434,47 +479,9 @@ void setup()
     // second DMA reads from the table and writes to the TX FIFO
     //
 
-    ch_mux[0] = dma_claim_unused_channel(true);
-    cfg_mux[0] = dma_channel_get_default_config(ch_mux[0]);
-
-    ch_mux[1] = dma_claim_unused_channel(true);
-    cfg_mux[1] = dma_channel_get_default_config(ch_mux[1]);
-
-    channel_config_set_read_increment(&cfg_mux[0],false);
-    channel_config_set_write_increment(&cfg_mux[0],false);
-    channel_config_set_dreq(&cfg_mux[0], DREQ_PIO1_RX3); // mux PIO
-    channel_config_set_chain_to(&cfg_mux[0], ch_mux[1]);
-    channel_config_set_transfer_data_size(&cfg_mux[0], DMA_SIZE_8);
-    channel_config_set_irq_quiet(&cfg_mux[0], true);
-    channel_config_set_enable(&cfg_mux[0], false);
-    dma_channel_configure(
-        ch_mux[0],                          // Channel to be configured
-        &cfg_mux[0],                        // The configuration we just created
-        &dma_hw->ch[ch_mux[1]].read_addr,   // The initial write address
-        &pio1_hw->rxf[3],                   // The initial read address
-        1,                                  // Number of transfers; in this case each is 1 byte.
-        false                               // do not Start immediately.      
-      );
-
-    channel_config_set_read_increment(&cfg_mux[1],false);
-    channel_config_set_write_increment(&cfg_mux[1],false);
-    channel_config_set_dreq(&cfg_mux[1], DREQ_PIO1_TX3); // mux PIO
-    //    channel_config_set_chain_to(&cfg_mux[0], ch_mux[1]);
-    channel_config_set_transfer_data_size(&cfg_mux[1], DMA_SIZE_8);
-    channel_config_set_irq_quiet(&cfg_mux[1], true);
-    channel_config_set_enable(&cfg_mux[1], false);
-    dma_channel_configure(
-        ch_mux[1],                          // Channel to be configured
-        &cfg_mux[1],                        // The configuration we just created
-        &pio1_hw->txf[3],                   // The initial write address
-        &mux_table[0],                      // The initial read address
-        1,                                  // Number of transfers; in this case each is 1 byte.
-        false                               // do not Start immediately.      
-      );
-
 
     // create DMA that reads 4-bit phases from mux PIO and writes 3 bit value (1 byte) to TX FIFO, which MUX applies to pindirs
-
+  switch_to_floppy();
     return;
     // skip all this for now
 
@@ -598,7 +605,7 @@ enum disk_mode_t {
 int main()
 {
   setup();
-  // switch_to_floppy();
+
   while (true)
   {
     esp_loop();

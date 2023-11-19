@@ -8,22 +8,18 @@
 
 .program mux
 .side_set 3 opt pindirs      
-.wrap_target     
+    pull
+    mov x, osr
+    out null, 3
 start:
-    jmp pin next4
+.wrap_target     
+    jmp pin next4   
+    mov isr, x
     in pins, 4
-    out pindirs, 3
-    .wrap
+    out pindirs, 3     
+.wrap
 next4:
-    jmp start       side 0b000  ; enable high (not enabled)
-    nop                     ; need to pad a couple instructions to make it same length as floppy mux
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
-    nop
+    jmp start      side 0b000  ; enable high (not enabled)
 
 % c-sdk {
 // this is a raw helper function for use by the user which sets up the GPIO input and output, and configures the SM to output on a particular pin
