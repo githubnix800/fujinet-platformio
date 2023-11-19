@@ -15,6 +15,7 @@
 #include "hardware/uart.h"
 #include "hardware/clocks.h"
 #include "hardware/claim.h"
+#include "hardware/dma.h"
 
 #include "hardware/pio.h"
 #include "hardware/pio_instructions.h"
@@ -181,6 +182,17 @@ uint8_t dcd_latch;
 
 inline uint16_t get_latch() { return latch; }
 inline uint16_t dcd_get_latch() { return ((dcd_latch << 8) + dcd_latch); }
+
+// need the following:
+// put_dcd_latch() {this tells the DMA to push the DCD latch into the latch PIO tx fifo}
+// put_floppy_latch() {this tells the DMA to push the FLOPPY latch into the latch PIO tx fifo}
+// create DMA channel that copies 1 16-bit value from latch or dcd_latch to the PIO TX FIFO
+
+void setup_latch_dma()
+{
+  
+}
+
 
 void set_latch(enum latch_bits s) { latch |= (1u << s); }
 
