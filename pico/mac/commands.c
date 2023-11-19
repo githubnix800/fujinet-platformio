@@ -26,7 +26,6 @@
 #include "latch.pio.h"
 #include "mux.pio.h"
 
-// #include "dcd_latch.pio.h"
 #include "dcd_commands.pio.h"
 #include "dcd_mux.pio.h"
 #include "dcd_read.pio.h"
@@ -69,7 +68,6 @@ void pio_echo(PIO pio, uint sm, uint offset, uint in_pin, uint out_pin, uint num
 void pio_latch(PIO pio, uint sm, uint offset, uint in_pin, uint out_pin);
 void pio_mux(PIO pio, uint sm, uint offset, uint in_pin, uint mux_pin);
 
-// void pio_dcd_latch(PIO pio, uint sm, uint offset, uint in_pin, uint out_pin);
 void pio_dcd_commands(PIO pio, uint sm, uint offset, uint pin);
 void pio_dcd_mux(PIO pio, uint sm, uint offset, uint pin);
 void pio_dcd_read(PIO pio, uint sm, uint offset, uint pin);
@@ -376,28 +374,6 @@ void setup()
     // printf("Loaded Floppy mux program at %d\n", pio_mux_offset);
     // pio_mux(pioblk_rw, SM_MUX, pio_mux_offset, MCI_CA0, ECHO_OUT);
 
-#ifdef FLOPPY
-    set_tach_freq(0); // start TACH clock
-    preset_latch();
-
-    offset = pio_add_program(pio_floppy, &commands_program);
-    printf("\nLoaded cmd program at %d\n", offset);
-    pio_commands(pio_floppy, SM_FPY_CMD, offset, MCI_CA0); // read phases starting on pin 8
-    
-    offset = pio_add_program(pio_floppy, &echo_program);
-    printf("Loaded echo program at %d\n", offset);
-    pio_echo(pio_floppy, SM_FPY_ECHO, offset, ECHO_IN, ECHO_OUT, 2);
-    
-    offset = pio_add_program(pio_floppy, &latch_program);
-    printf("Loaded latch program at %d\n", offset);
-    pio_latch(pio_floppy, SM_LATCH, offset, MCI_CA0, LATCH_OUT);
-    pio_sm_put_blocking(pio_floppy, SM_LATCH, get_latch()); // send the register word to the PIO         
-    
-    offset = pio_add_program(pio_floppy, &mux_program);
-    printf("Loaded mux program at %d\n", offset);
-    pio_mux(pio_floppy, SM_MUX, offset, MCI_CA0, ECHO_OUT);
-
-#endif // FLOPPY
 }
 
 void dcd_loop();
@@ -414,7 +390,7 @@ enum disk_mode_t {
 int main()
 {
   setup();
-  // switch_to_floppy();
+
   while (true)
   {
     esp_loop();
@@ -1249,12 +1225,6 @@ void pio_mux(PIO pio, uint sm, uint offset, uint in_pin, uint mux_pin)
     mux_program_init(pio, sm, offset, in_pin, mux_pin);
     pio_sm_set_enabled(pio, sm, true);
 }
-
-// void pio_dcd_latch(PIO pio, uint sm, uint offset, uint in_pin, uint out_pin)
-// {
-//     latch_program_init(pio, sm, offset, in_pin, out_pin);
-//     pio_sm_set_enabled(pio, sm, true);
-// }
 
 void pio_dcd_commands(PIO pio, uint sm, uint offset, uint pin)
 {
