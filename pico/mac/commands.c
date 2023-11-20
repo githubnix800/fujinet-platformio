@@ -215,14 +215,11 @@ void put_floppy_latch() { dma_channel_hw_addr(chan_latch)->al3_read_addr_trig = 
 void put_dcd_latch() { dma_channel_hw_addr(chan_latch)->al3_read_addr_trig = (uintptr_t)&dcd_latch; }
 
 void set_latch(enum latch_bits s) { latch |= (1u << s); }
+void clr_latch(enum latch_bits c) { latch &= ~(1u << c); }
+bool latch_val(enum latch_bits s) { return latch & (1u << s); }
 
 void dcd_set_latch(uint8_t s) { dcd_latch |= (1u << s); dcd_latch |= (1u << (s+8)); }
-
-void clr_latch(enum latch_bits c) { latch &= ~(1u << c); }
-
 void dcd_clr_latch(uint8_t c) { dcd_latch &= ~(1u << c); dcd_latch &= ~(1u << (c+8)); }
-
-bool latch_val(enum latch_bits s) { return latch & (1u << s); }
 
 void dcd_assert_hshk()
 {                   // State	CA2	  CA1	  CA0	  HOST	HOFF	RESET	RD Function
