@@ -638,7 +638,7 @@ void dcd_loop()
     // printf("m%dm",m);
     if (m != 0)
     {
-      active_disk_number = num_dcd_drives + 'A' - m;
+      active_disk_number = num_dcd_drives + 'A' - (m>>1);
       printf("%c", active_disk_number);
       uart_putc_raw(UART_ID, active_disk_number);
     }
