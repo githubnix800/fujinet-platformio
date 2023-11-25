@@ -12,14 +12,14 @@
     ; out null, 1
     ;
     ; or using c code:
-    ; pio_sm_put(pioblk_rw, SM_LATCH, (uintptr_t)latch_lut >> 5);
+    ; pio_sm_put(pioblk_rw, SM_LATCH, (uintptr_t)latch_lut >> 6);
     ; pio_sm_exec_wait_blocking(pioblk_rw, SM_LATCH, pio_encode_pull(false, true));
     ; pio_sm_exec_wait_blocking(pioblk_rw, SM_LATCH, pio_encode_mov(pio_y, pio_osr));
     ; pio_sm_exec_wait_blocking(pioblk_rw, SM_LATCH, pio_encode_out(pio_null, 1)); 
 
 .program latch
     mov isr, y      ; put the base address in ISR
-    in pins, 5      ; copy the pin combination into the ISR (auto push)
+    in pins, 6      ; copy the pin combination into the ISR (auto push)
     out pins, 1     ; output the latch bit value 
 
 % c-sdk {

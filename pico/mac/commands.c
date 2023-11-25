@@ -111,31 +111,26 @@ uint num_dcd_drives;
  * LATCH INFORMATION AND CODE
 */
 
-__aligned(32) bool latch_lut[24];
+#define NLATCHBITS 6
+__aligned(1<<NLATCHBITS) bool latch_lut[48];
+
+// WIP:
+// the 7 pins used for LATCH addressing
+// inputs from IWM bus  CA0 / Phase0	6
+// CA1 / Phase1	                      7
+// CA2 / Phase2	                      8
+// SEL / Head Select	                9
+// DISKFLAG (floppy or DCD)			      10
+// from IWM bus	!ENBL / Drive Enable	11
+// other IWM enable	not connected	n/c	12
 
 // latches stored at bool LUT's. Floppy is 16 bits and dcd is 8 bits,
-// represented by bool in array. Array is addressed via DMA using following addresses:
+// represented by bool in array. Two floppies (internal and external).
+// Array is addressed via DMA using following addresses:
 
-// 0b0xxxx   0..15 is floppy
-// 0b10xxx  16..24 is dcd
-
-// the dcd latch is the same for all the dcd drives - no unique info
-// floppy latches have many unique settings (e.g., CSTIN, TK0, SIDES)
-// so if we add the internal floppy, we need another 16 values.
-// if we add another address bit using the internal ENABLE line
-// then we can expand the lut to 24+16 = 40 bools (aligned to 64 bytes)
-// floppy is 16 bits and dcd is 8 bits
-// 0b00xxxx   0..15 is internal floppy
-// 0b01xxxx  16..31 is unassigned
-// 0b10xxxx  32..47 is external floppy
-// 0b110xxx  48..55 is dcd
-// 0b111xxx  56..63 is unassigned 
-//
-// this means putting the internal ENABLE on pin DISKFLAG+1 = 13
-// or rather move CA0 down to 6 and put the two ENABLES above DISKFLAG
-//
-// not sure if there's enough SM instructions left to force a floppy type when 
-// the internal ENABLE is activated
+// 0000 xxxx or 00-0f is external floppy
+// 0001 0xxx or 10-17 is external dcd
+// 0010 xxxx or 20-2f is internal floppy
 
 /**
  * 800 KB GCR Drive
@@ -203,11 +198,16 @@ enum latch_bits {
     REVISED         // f REVISED     This status line is used to indicate that the interface definition of the connected external drive. When REVISED is a one, the drive Part No. will be 699-0326 or when REVISED is a zero, the drive Part No. will be 699-0285.
 };
 
-uint16_t get_latch() 
+enum in_ex {
+  EXT = 0,
+  INT = 32
+};
+
+uint16_t get_latch(enum in_ex d) 
 {
   int latch = 0;
   for (int i=0; i<16; i++)
-    latch |= ((int)latch_lut[i] << i);
+    latch |= ((int)latch_lut[i+d] << i);
   return (uint16_t)(latch & 0xffff);
 }
 
@@ -219,9 +219,9 @@ uint8_t dcd_get_latch()
   return (uint8_t)(latch & 0xff);
 }
 
-void set_latch(enum latch_bits s) { latch_lut[s] = true; }
-void clr_latch(enum latch_bits c) { latch_lut[c] = false; }
-bool latch_val(enum latch_bits s) { return latch_lut[s]; }
+void set_latch(enum latch_bits s, enum in_ex d) { latch_lut[s+d] = true; }
+void clr_latch(enum latch_bits c, enum in_ex d) { latch_lut[c+d] = false; }
+bool latch_val(enum latch_bits s, enum in_ex d) { return latch_lut[s+d]; }
 
 void dcd_set_latch(uint8_t s) { latch_lut[16 + s] = true; }
 void dcd_clr_latch(uint8_t c) { latch_lut[16 + c] = false; }
@@ -241,30 +241,30 @@ void dcd_deassert_hshk()
   // pio_sm_put_blocking(pioblk_rw, SM_LATCH, dcd_get_latch()); // send the register word to the PIO
 }
 
-void preset_latch()
+void preset_latch(enum in_ex d)
 {
   for (int i = 0; i < 16; i++)
   {
     // latch_lut[i] = true;
-    set_latch(i);
+    set_latch(i,d);
   }
   // set up like an empty floppy
     // latch =-1;
     // clr_latch(DIRTN);
     // set_latch(STEP);
     // set_latch(MOTORON);
-    clr_latch(EJECT);
+    clr_latch(EJECT,d);
     // set_latch(na0101); // to contrast to DCD, but this is SUPERDRIVE
-    clr_latch(SINGLESIDE); // clear it to start so in constrast with DCD if necessary
-    clr_latch(DRVIN); // low because the drive is present
+    clr_latch(SINGLESIDE,d); // clear it to start so in constrast with DCD if necessary
+    clr_latch(DRVIN,d); // low because the drive is present
     // set_latch(CSTIN); // no disk in drive
-    clr_latch(WRTPRT);
+    clr_latch(WRTPRT,d);
     // set_latch(TKO);
     // set_latch(READY);
     // set_latch(REVISED);   // my mac plus revised looks set
     // for (int i=0; i<16; i++)
     //   printf("\nlatch bit %02d = %d",i, latch_val(i));
-    printf("\nFloppy Latch: %04x", get_latch());
+    printf("\nFloppy Latch: %04x", get_latch(d));
 }
 
 void dcd_preset_latch()
@@ -342,7 +342,8 @@ void setup()
 
     // merged setup
     set_tach_freq(0); // start TACH clock
-    preset_latch();
+    preset_latch(EXT);
+    preset_latch(INT);
     dcd_preset_latch();
 
     /** 
@@ -376,7 +377,7 @@ void setup()
     offset = pio_add_program(pioblk_rw, &latch_program);
     printf("\nLoaded latch program at %d\n", offset);
     latch_program_init(pioblk_rw, SM_LATCH, offset, MCI_CA0, LATCH_OUT);
-    pio_sm_put(pioblk_rw, SM_LATCH, (uintptr_t)latch_lut >> 5);
+    pio_sm_put(pioblk_rw, SM_LATCH, (uintptr_t)latch_lut >> NLATCHBITS);
     pio_sm_exec_wait_blocking(pioblk_rw, SM_LATCH, pio_encode_pull(false, true));
     pio_sm_exec_wait_blocking(pioblk_rw, SM_LATCH, pio_encode_mov(pio_y, pio_osr));
     pio_sm_exec_wait_blocking(pioblk_rw, SM_LATCH, pio_encode_out(pio_null, 1)); 
@@ -488,16 +489,16 @@ void esp_loop()
       break;
     case 's':
       // single sided disk is in the slot
-      clr_latch(SINGLESIDE);
-      clr_latch(CSTIN);
-      clr_latch(WRTPRT); // everythign is write protected for now
+      clr_latch(SINGLESIDE,EXT);
+      clr_latch(CSTIN,EXT);
+      clr_latch(WRTPRT,EXT); // everythign is write protected for now
       printf("\nSS disk mounted");
       break;
     case 'd':
       // double sided disk
-      set_latch(SINGLESIDE);
-      clr_latch(CSTIN);
-      clr_latch(WRTPRT); // everythign is write protected for now
+      set_latch(SINGLESIDE,EXT);
+      clr_latch(CSTIN,EXT);
+      clr_latch(WRTPRT,EXT); // everythign is write protected for now
       printf("\nDS disk mounted");
       break;
     default:
@@ -520,7 +521,7 @@ void floppy_loop()
   {
     a = pio_sm_get_blocking(pioblk_read_only, SM_FPY_CMD);
     // printf("%d",a);
-    if (latch_val(CSTIN))
+    if (latch_val(CSTIN,EXT))
       return;
     switch (a)
     {
@@ -537,18 +538,18 @@ void floppy_loop()
       // When !ENBL is high !DIRTN is set to zero.
       // Change of !DIRTN command is not allowed during head movement nor head settlying time.
       // set direction to increase track number
-      clr_latch(DIRTN);
+      clr_latch(DIRTN,EXT);
       break;
     case 4:
-      set_latch(DIRTN);
+      set_latch(DIRTN,EXT);
       break;
     case 1:
       // !STEP
       // At the falling edge of this signal the destination track counter is counted up or down depending on the !DIRTN level.
       // After the destination counter in the drive received the falling edge of !STEP, the drive sets !STEP to high.
       // step the head
-      clr_latch(STEP);
-      set_latch(READY);
+      clr_latch(STEP,EXT);
+      set_latch(READY,EXT);
       step_state = true;
       break;
     case 2:
@@ -556,13 +557,13 @@ void floppy_loop()
       // When this signal is set to low, the disk motor is turned on.
       // When !ENBL is high, /MOTORON is set to high.
       // turn motor on
-      clr_latch(MOTORON);
-      set_latch(READY);
+      clr_latch(MOTORON,EXT);
+      set_latch(READY,EXT);
       break;
     case 6:
       // turn motor off
-      set_latch(MOTORON);
-      set_latch(READY);
+      set_latch(MOTORON,EXT);
+      set_latch(READY,EXT);
       break;
     case 7:
       // EJECT
@@ -570,8 +571,8 @@ void floppy_loop()
       // EJECT is set to low at rising edge of !CSTIN or 2 sec maximum after rising edge of EJECT.
       // When power is turned on, EJECT is set to low.
       // eject
-      set_latch(EJECT); // gets cleared when ESP responds with 'E'
-      set_latch(READY);
+      set_latch(EJECT,EXT); // gets cleared when ESP responds with 'E'
+      set_latch(READY,EXT);
       break;
     default:
       printf("\nUNKNOWN PHASE COMMAND");
@@ -585,7 +586,7 @@ void floppy_loop()
     // After the destination counter in the drive received the falling edge of !STEP, the drive sets !STEP to high.
     if (step_state)
     {
-      set_latch(STEP);
+      set_latch(STEP,EXT);
       step_state = false;
     }
 
@@ -603,7 +604,7 @@ void floppy_loop()
     if (c & 128)
     {
       if (c == 128)
-          clr_latch(TKO); // at track zero
+          clr_latch(TKO,EXT); // at track zero
       // set_tach_freq(c & 127);
     }
     else
@@ -614,17 +615,17 @@ void floppy_loop()
         //  At the rising edge of the LSTRB, EJECT is set to high and the ejection operation starts.
         //  EJECT is set to low at rising edge of !CSTIN or 2 sec maximum after rising edge of EJECT.
         //  When power is turned on, EJECT is set to low.
-          set_latch(CSTIN);
-          clr_latch(EJECT);
+          set_latch(CSTIN,EXT);
+          clr_latch(EJECT,EXT);
           printf("\nFloppy Ejected");
         break;
       case 'S':             // step complete (data copied to RMT buffer on ESP32)
           printf("\nStep sequence complete");
-          clr_latch(READY); // hack - really should not set READY low until the 3 criteria are met
+          clr_latch(READY,EXT); // hack - really should not set READY low until the 3 criteria are met
           break;
       case 'M':             // motor on
           printf("\nMotor is on");
-          clr_latch(READY); // hack - really should not set READY low until the 3 criteria are met
+          clr_latch(READY,EXT); // hack - really should not set READY low until the 3 criteria are met
           break;
       default:
           break;
