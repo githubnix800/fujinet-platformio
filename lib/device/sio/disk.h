@@ -1,9 +1,9 @@
 #ifndef DISK_H
 #define DISK_H
 
-#include <fujiHost.h>
-#include "bus.h"
-#include "media.h"
+#include "../fuji/fujiHost.h"
+#include "../bus/bus.h"
+#include "../media/media.h"
 
 class sioDisk : public virtualDevice
 {
