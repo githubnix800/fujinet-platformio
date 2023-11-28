@@ -19,5 +19,6 @@
 #include "pinmap/cx16.h"
 #include "pinmap/rc2014spi_rev0.h"
 #include "pinmap/heathkit_h89.h"
+#include "pinmap/lolind32pro.h"
 
 #endif /* PINMAP_H */
