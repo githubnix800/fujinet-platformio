@@ -2,8 +2,8 @@
 #ifdef PINMAP_LOLIND32PRO
 
 /* SD Card */
-#define PIN_CARD_DETECT         GPIO_NUM_23 // fnSystem.h
-#define PIN_CARD_DETECT_FIX     GPIO_NUM_23 // fnSystem.h
+#define PIN_CARD_DETECT         GPIO_NUM_12 // fnSystem.h
+#define PIN_CARD_DETECT_FIX     GPIO_NUM_12 // fnSystem.h
 #define PIN_SD_HOST_CS          GPIO_NUM_4  // fnFsSD.cpp
 #define PIN_SD_HOST_MISO        GPIO_NUM_19
 #define PIN_SD_HOST_MOSI        GPIO_NUM_23
