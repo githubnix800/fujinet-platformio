@@ -3,12 +3,12 @@
 
 #include <string.h>
 
-#include "bus.h"
-#include "fnTcpClient.h"
-#include "fnTcpServer.h"
+#include "../bus/bus.h"
+#include "../tcpip/fnTcpClient.h"
+#include "../tcpip/fnTcpServer.h"
 #include "fnUART.h"
-#include "modem-sniffer.h"
-#include "libtelnet.h"
+#include "../modem-sniffer/modem-sniffer.h"
+#include "../telnet/libtelnet.h"
 
 /* Keep strings under 40 characters, for the benefit of 40-column users! */
 #define HELPL01 "       FujiNet Virtual Modem 850"
