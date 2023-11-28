@@ -3,7 +3,7 @@
 
 #include "../../include/pinmap.h"
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "fnSystem.h"
 
 #define CASSETTE_BAUDRATE 600
