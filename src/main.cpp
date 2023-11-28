@@ -5,14 +5,15 @@
 #endif
 
 #include "debug.h"
-#include "bus.h"
+#include "../bus/bus.h"
 #include "device.h"
 #include "keys.h"
 #include "led.h"
 #include "crypt.h"
+#include "../modem/modem.h"
 
 #include "fnSystem.h"
-#include "fnConfig.h"
+#include "../config/fnConfig.h"
 #include "fnWiFi.h"
 
 #include "fsFlash.h"
