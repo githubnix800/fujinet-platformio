@@ -2,7 +2,7 @@
 #define DISK_H
 
 #include <fujiHost.h>
-#include "bus.h"
+#include "../bus/bus.h"
 #include "media.h"
 
 class cx16Disk : public virtualDevice

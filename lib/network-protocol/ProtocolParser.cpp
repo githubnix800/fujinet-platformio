@@ -1,4 +1,4 @@
-#include "ProtocolParser.h"
+#include "../network-protocol/ProtocolParser.h"
 
 #include <algorithm>
 

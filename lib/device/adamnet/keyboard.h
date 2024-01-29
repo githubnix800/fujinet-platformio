@@ -4,9 +4,9 @@
 #include <cstdint>
 #include <queue>
 
-#include "bus.h"
+#include "../bus/bus.h"
 
-#include "fnTcpServer.h"
+#include "../tcpip/fnTcpServer.h"
 
 class adamKeyboard : public virtualDevice
 {

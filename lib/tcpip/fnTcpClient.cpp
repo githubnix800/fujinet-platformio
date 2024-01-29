@@ -1,6 +1,6 @@
 /* Modified version of ESP-Arduino fnTcpClient.cpp/h */
 
-#include "fnTcpClient.h"
+#include "../tcpip/fnTcpClient.h"
 
 #include <cstring>
 #include <fcntl.h>

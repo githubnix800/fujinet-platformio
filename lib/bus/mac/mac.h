@@ -2,7 +2,7 @@
 #ifndef MAC_H
 #define MAC_H
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include <cstdint>
 #include <forward_list>
 #include <string>
@@ -127,7 +127,7 @@ extern macBus MAC;
 
 #include "../../include/debug.h"
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "iwm_ll.h"
 
 #include <cstdint>

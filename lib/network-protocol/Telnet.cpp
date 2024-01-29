@@ -13,8 +13,8 @@
 
 #include "../../include/debug.h"
 
-#include "libtelnet.h"
-#include "status_error_codes.h"
+#include "../telnet/libtelnet.h"
+#include "../network-protocol/status_error_codes.h"
 
 
 

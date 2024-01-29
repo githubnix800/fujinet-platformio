@@ -7,7 +7,7 @@
 
 #include <sstream>
 
-#include "fnTcpClient.h"
+#include "../tcpip/fnTcpClient.h"
 
 using std::string;
 

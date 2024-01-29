@@ -3,7 +3,7 @@
 
 #include <stdio.h>
 
-#include "fnUART.h"
+#include "../hardware/fnUART.h"
 #include "sioport.h"
 
 /*

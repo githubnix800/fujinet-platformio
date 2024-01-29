@@ -2,7 +2,7 @@
 #define PROTOCOLPARSER_H
 
 #include <string>
-#include "Protocol.h"
+#include "../network-protocol/Protocol.h"
 
 class ProtocolParser
 {

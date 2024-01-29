@@ -1,7 +1,7 @@
 #ifndef IWMCLOCK_H
 #define IWMCLOCK_H
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 class iwmClock : public iwmDevice
 {

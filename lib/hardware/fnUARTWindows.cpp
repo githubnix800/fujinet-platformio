@@ -4,7 +4,7 @@
 
 // Windows UART code
 
-#include "fnUART.h"
+#include "../hardware/fnUART.h"
 
 #include <string.h>
 #include <cstdarg>

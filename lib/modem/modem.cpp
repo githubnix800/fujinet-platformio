@@ -4,7 +4,7 @@
 #include "../../../include/debug.h"
 #include "../../../include/atascii.h"
 
-#include "modem-sniffer.h"
+#include "../modem-sniffer/modem-sniffer.h"
 #include "fnSystem.h"
 #include "fnConfig.h"
 #include "fnWiFi.h"

@@ -8,7 +8,7 @@
 #include "../../include/debug.h"
 
 #include "fnSystem.h"
-#include "bus.h"
+#include "../bus/bus.h"
 #include "fnUDP.h"
 
 #include "utils.h"

@@ -6,7 +6,7 @@
 
 #include "../../include/debug.h"
 
-#include "status_error_codes.h"
+#include "../network-protocol/status_error_codes.h"
 
 
 #define RXBUF_SIZE 65535

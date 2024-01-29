@@ -19,7 +19,7 @@
 
 #include "cpbstandardserial.h"
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "_protocol.h"
 
 #include "../../../include/debug.h"

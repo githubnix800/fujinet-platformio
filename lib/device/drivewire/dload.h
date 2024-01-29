@@ -2,7 +2,7 @@
 #define DLOAD_H
 
 #include "../../include/pinmap.h"
-#include "bus.h"
+#include "../bus/bus.h"
 #include "fnSystem.h"
 
 class drivewireDload : public virtualDevice

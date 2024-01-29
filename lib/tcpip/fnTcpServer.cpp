@@ -1,6 +1,6 @@
 /* Modified version of ESP-Arduino fnTcpServer.cpp/h */
 
-#include "fnTcpServer.h"
+#include "../tcpip/fnTcpServer.h"
 
 #include <fcntl.h>
 

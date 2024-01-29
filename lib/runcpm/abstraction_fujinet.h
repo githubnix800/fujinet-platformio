@@ -17,10 +17,10 @@
 #include "fnWiFi.h"
 #include "fnFsSD.h"
 #ifdef ESP_PLATFORM
-#include "fnUART.h"
+#include "../hardware/fnUART.h"
 #endif
-#include "fnTcpServer.h"
-#include "fnTcpClient.h"
+#include "../tcpip/fnTcpServer.h"
+#include "../tcpip/fnTcpClient.h"
 
 #include "fuji.h"
 

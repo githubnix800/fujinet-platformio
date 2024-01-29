@@ -16,7 +16,7 @@
 #include <smb2/smb2.h>
 //#include <smb2/libsmb2-raw.h>
 
-#include "status_error_codes.h"
+#include "../network-protocol/status_error_codes.h"
 #include "utils.h"
 
 

@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "disk.h"
 #include "network.h"
 #include "cassette.h"

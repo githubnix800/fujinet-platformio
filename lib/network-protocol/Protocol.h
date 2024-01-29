@@ -3,8 +3,8 @@
 
 #include <string>
 
-#include "bus.h"
-#include "networkStatus.h"
+#include "../bus/bus.h"
+#include "../network-protocol/networkStatus.h"
 #include "peoples_url_parser.h"
 
 class NetworkProtocol

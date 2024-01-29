@@ -2,7 +2,7 @@
 
 #include "_protocol.h"
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 #include "../../../include/pinmap.h"
 #include "../../../include/debug.h"

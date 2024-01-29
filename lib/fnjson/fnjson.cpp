@@ -5,7 +5,7 @@
  *   <thom.cherryhomes@gmail.com>
  */
 
-#include "fnjson.h"
+#include "../fnjson/fnjson.h"
 
 #include <string.h>
 #include <sstream>

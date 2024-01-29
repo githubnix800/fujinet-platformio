@@ -44,7 +44,7 @@
 #include "../../include/version.h"
 #include "../../include/pinmap.h"
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 #include "fsFlash.h"
 #include "fnFsSD.h"

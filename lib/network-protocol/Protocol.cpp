@@ -2,7 +2,7 @@
  * Network Protocol Base class
  */
 
-#include "Protocol.h"
+#include "../network-protocol/Protocol.h"
 
 #include <algorithm>
 #include <errno.h>
@@ -10,7 +10,7 @@
 #include "../../include/debug.h"
 
 #include "compat_inet.h"
-#include "status_error_codes.h"
+#include "../network-protocol/status_error_codes.h"
 #include "utils.h"
 #include "string_utils.h"
 

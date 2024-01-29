@@ -4,7 +4,7 @@
 
 #include "../../include/debug.h"
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "fnConfig.h"
 #include "fnBluetoothSPP.h"
 

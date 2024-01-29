@@ -5,13 +5,13 @@
 
 #include <string>
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 #include "peoples_url_parser.h"
 
-#include "Protocol.h"
+#include "../network-protocol/Protocol.h"
 
-#include "ProtocolParser.h"
+#include "../network-protocol/ProtocolParser.h"
 
 /**
  * Number of devices to expose via s100spi, becomes 0x71 to 0x70 + NUM_DEVICES - 1

@@ -17,9 +17,9 @@
 #include "fnSystem.h"
 #include "fnWiFi.h"
 #include "fnFsSD.h"
-#include "fnUART.h"
-#include "fnTcpServer.h"
-#include "fnTcpClient.h"
+#include "../hardware/fnUART.h"
+#include "../tcpip/fnTcpServer.h"
+#include "../tcpip/fnTcpClient.h"
 
 #include "fuji.h"
 

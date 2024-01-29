@@ -2,7 +2,7 @@
 #ifndef RS232CPM_H
 #define RS232CPM_H
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 
 #define FOLDERCHAR '/'

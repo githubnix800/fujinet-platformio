@@ -2,7 +2,7 @@
 #ifndef DISK2_H
 #define DISK2_H
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "../media/media.h"
 
 class iwmDisk2 : public iwmDevice

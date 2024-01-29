@@ -5,10 +5,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "bus.h"
+#include "../bus/bus.h"
 
-#include "fnTcpClient.h"
-#include "fnTcpServer.h"
+#include "../tcpip/fnTcpClient.h"
+#include "../tcpip/fnTcpServer.h"
 
 class lynxSerial : public virtualDevice
 {

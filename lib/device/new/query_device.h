@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 #define ADAMNET_SEARCH_DEVICE_TIMEOUT (220)
 

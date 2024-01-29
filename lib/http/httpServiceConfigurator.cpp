@@ -8,7 +8,7 @@
 #include "fnSystem.h"
 #include "fnConfig.h"
 #ifndef ESP_PLATFORM
-#include "bus.h"
+#include "../bus/bus.h"
 #endif
 
 #include "utils.h"

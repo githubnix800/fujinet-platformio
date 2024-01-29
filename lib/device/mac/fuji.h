@@ -4,7 +4,7 @@
 #include <cstdint>
 
 #include "../../include/debug.h"
-#include "bus.h"
+#include "../bus/bus.h"
 
 #include "mac/floppy.h"
 // #include "mac/network.h"
@@ -228,7 +228,7 @@ extern macFuji theFuji;
 #include <cstdint>
 
 #include "../../include/debug.h"
-#include "bus.h"
+#include "../bus/bus.h"
 #include "iwm/disk2.h"
 #include "iwm/network.h"
 #include "iwm/printer.h"

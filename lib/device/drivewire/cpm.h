@@ -2,7 +2,7 @@
 #ifndef DRIVEWIRECPM_H
 #define DRIVEWIRECPM_H
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 
 #define FOLDERCHAR '/'

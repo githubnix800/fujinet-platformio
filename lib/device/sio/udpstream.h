@@ -5,7 +5,7 @@
 #include <driver/ledc.h>
 #endif
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 #include "fnUDP.h"
 

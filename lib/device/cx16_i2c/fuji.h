@@ -5,7 +5,7 @@
 #include <cstring>
 #include <string>
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "network.h"
 #include "cassette.h"
 

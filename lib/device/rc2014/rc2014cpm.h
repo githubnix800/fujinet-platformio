@@ -2,7 +2,7 @@
 #ifndef RC2014CPM_H
 #define RC2014CPM_H
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 
 #define FOLDERCHAR '/'

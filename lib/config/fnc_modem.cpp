@@ -1,7 +1,7 @@
 #include "fnConfig.h"
 #include <cstring>
 #include "../device/modem.h"
-#include "modem-sniffer.h"
+#include "../modem-sniffer/modem-sniffer.h"
 #include "utils.h"
 
 // Saves ENABLE or DISABLE Modem

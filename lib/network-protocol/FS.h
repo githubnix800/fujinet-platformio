@@ -5,7 +5,7 @@
 #ifndef NETWORKPROTOCOL_FS
 #define NETWORKPROTOCOL_FS
 
-#include "Protocol.h"
+#include "../network-protocol/Protocol.h"
 
 class NetworkProtocolFS : public NetworkProtocol
 {

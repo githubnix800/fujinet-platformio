@@ -5,7 +5,7 @@
 #include "cpm.h"
 
 #include "fnSystem.h"
-#include "fnUART.h"
+#include "../hardware/fnUART.h"
 #include "fnWiFi.h"
 #include "fuji.h"
 #include "fnFS.h"

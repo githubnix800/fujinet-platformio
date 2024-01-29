@@ -5,10 +5,10 @@
 #ifndef NETWORKPROTOCOL_TCP
 #define NETWORKPROTOCOL_TCP
 
-#include "Protocol.h"
+#include "../network-protocol/Protocol.h"
 
-#include "fnTcpClient.h"
-#include "fnTcpServer.h"
+#include "../tcpip/fnTcpClient.h"
+#include "../tcpip/fnTcpServer.h"
 
 class NetworkProtocolTCP : public NetworkProtocol
 {

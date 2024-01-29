@@ -20,7 +20,7 @@
 
 #include <rom/ets_sys.h>
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "_protocol.h"
 
 #include "../../../include/debug.h"

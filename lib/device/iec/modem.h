@@ -2,7 +2,7 @@
 #ifndef MODEM_H
 #define MODEM_H
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 #include "../modem-sniffer/modem-sniffer.h"
 #include <cstdint>

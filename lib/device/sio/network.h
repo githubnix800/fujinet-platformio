@@ -10,12 +10,12 @@
 
 #include "../bus/bus.h"
 
-#include "Protocol.h"
+#include "../network-protocol/Protocol.h"
 #include "peoples_url_parser.h"
-#include "networkStatus.h"
-#include "status_error_codes.h"
-#include "fnjson.h"
-#include "ProtocolParser.h"
+#include "../network-protocol/networkStatus.h"
+#include "../network-protocol/status_error_codes.h"
+#include "../fnjson/fnjson.h"
+#include "../network-protocol/ProtocolParser.h"
 
 /**
  * Number of devices to expose via SIO, becomes 0x71 to 0x70 + NUM_DEVICES - 1

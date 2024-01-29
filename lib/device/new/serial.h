@@ -3,10 +3,10 @@
 
 #include <cstdint>
 
-#include "bus.h"
+#include "../bus/bus.h"
 
-#include "fnTcpClient.h"
-#include "fnTcpServer.h"
+#include "../tcpip/fnTcpClient.h"
+#include "../tcpip/fnTcpServer.h"
 
 class adamSerial : public virtualDevice
 {

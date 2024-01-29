@@ -3,7 +3,7 @@
 
 #include <string>
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "samlib.h"
 
 class sioVoice : public virtualDevice

@@ -1,6 +1,6 @@
 #ifdef BUILD_H89
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "modem.h"
 
 #include "../../../include/debug.h"
@@ -8,7 +8,7 @@
 
 #include "fnSystem.h"
 #include "fnConfig.h"
-#include "fnUART.h"
+#include "../hardware/fnUART.h"
 #include "fnWiFi.h"
 
 #include "utils.h"

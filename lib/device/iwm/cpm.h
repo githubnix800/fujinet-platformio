@@ -1,7 +1,7 @@
 #ifndef IWMCPM_H
 #define IWMCPM_H
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 
 #define FOLDERCHAR '/'

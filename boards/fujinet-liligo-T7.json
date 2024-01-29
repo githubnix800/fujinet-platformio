@@ -32,8 +32,8 @@
   "name": "#FujiNet Liligo T7",
   "upload": {
     "flash_size": "4MB",
-    "maximum_ram_size": 4521984,
-    "maximum_size": 16777216,
+    "maximum_ram_size": 327680,
+    "maximum_size": 4194304,
     "protocols": [
       "esptool",
       "espota",

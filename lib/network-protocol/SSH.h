@@ -11,9 +11,9 @@
 
 #include <string>
 
-#include "Protocol.h"
+#include "../network-protocol/Protocol.h"
 
-#include "fnTcpClient.h"
+#include "../tcpip/fnTcpClient.h"
 #include "libssh/libssh.h"
 #ifdef ESP_PLATFORM
 // apc: this is libssh private header!

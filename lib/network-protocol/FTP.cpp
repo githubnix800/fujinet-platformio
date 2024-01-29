@@ -10,7 +10,7 @@
 
 #include "../../include/debug.h"
 
-#include "status_error_codes.h"
+#include "../network-protocol/status_error_codes.h"
 
 
 NetworkProtocolFTP::NetworkProtocolFTP(std::string *rx_buf, std::string *tx_buf, std::string *sp_buf)

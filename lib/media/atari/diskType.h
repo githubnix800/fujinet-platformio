@@ -9,7 +9,7 @@
 #include "fnFile.h"
 #endif
 
-#include "fujiHost.h"
+#include "../fuji/fujiHost.h"
 
 #define INVALID_SECTOR_VALUE 65536
 

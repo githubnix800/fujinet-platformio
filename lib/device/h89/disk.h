@@ -1,7 +1,7 @@
 #ifndef DISK_H
 #define DISK_H
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "media.h"
 
 #define STATUS_OK        0

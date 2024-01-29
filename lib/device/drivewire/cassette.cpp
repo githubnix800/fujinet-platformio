@@ -8,7 +8,7 @@
 #include "../../include/debug.h"
 
 #include "fnSystem.h"
-#include "fnUART.h"
+#include "../hardware/fnUART.h"
 #include "fnFsSD.h"
 #include "fnFsSPIFFS.h"
 

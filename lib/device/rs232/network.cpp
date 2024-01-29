@@ -15,7 +15,7 @@
 #include "fnSystem.h"
 #include "utils.h"
 
-#include "status_error_codes.h"
+#include "../network-protocol/status_error_codes.h"
 #include "TCP.h"
 #include "UDP.h"
 #include "Test.h"
@@ -26,7 +26,7 @@
 #include "SSH.h"
 #include "SMB.h"
 
-#include "ProtocolParser.h"
+#include "../network-protocol/ProtocolParser.h"
 
 using namespace std;
 

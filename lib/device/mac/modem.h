@@ -2,10 +2,10 @@
 #ifndef MAC_MODEM_H
 #define MAC_MODEM_H
 
-#include "bus.h"
+#include "../bus/bus.h"
 #include "fnSystem.h"
 
-#include "modem-sniffer.h"
+#include "../modem-sniffer/modem-sniffer.h"
 
 class macModem : public macDevice
 {
@@ -35,11 +35,11 @@ public:
 #include <cstdint>
 #include <string>
 
-#include "bus.h"
+#include "../bus/bus.h"
 
-#include "fnTcpServer.h"
-#include "fnTcpClient.h"
-#include "modem-sniffer.h"
+#include "../tcpip/fnTcpServer.h"
+#include "../tcpip/fnTcpClient.h"
+#include "../modem-sniffer/modem-sniffer.h"
 #include "../telnet/libtelnet.h"
 
 /* Keep strings under 40 characters, for the benefit of 40-column users! */

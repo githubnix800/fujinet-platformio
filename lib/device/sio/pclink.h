@@ -1,7 +1,7 @@
 #ifndef PCLINK_H
 #define PCLINK_H
 
-#include "bus.h"
+#include "../bus/bus.h"
 
 class sioPCLink : public virtualDevice
 {
