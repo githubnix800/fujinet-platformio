@@ -10,9 +10,17 @@
 #define FN_VERSION_MAJOR 1
 #define FN_VERSION_MINOR 2
 
+<<<<<<< HEAD
 #define FN_VERSION_BUILD "0291d5964f87409de2b2f9e800d89818b656d050"
 
 #define FN_VERSION_DATE "2023-10-14 18:40:00"
 
 #define FN_VERSION_FULL "v1.2"
+=======
+#define FN_VERSION_BUILD "6646a6d0"
+
+#define FN_VERSION_DATE "2024-01-29 15:56:12"
+
+#define FN_VERSION_FULL "0.5.6646a6d0"
+>>>>>>> origin/ledstrip
 
