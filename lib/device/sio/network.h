@@ -1,19 +1,21 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#ifdef ESP_PLATFORM
 #include <driver/timer.h>
+#endif
 
 #include <string>
 #include <vector>
 
 #include "../bus/bus.h"
 
-#include "../network-protocol/Protocol.h"
-#include "../EdUrlParser/EdUrlParser.h"
-#include "../network-protocol/networkStatus.h"
-#include "../network-protocol/status_error_codes.h"
-#include "../fnjson/fnjson.h"
-#include "../network-protocol/ProtocolParser.h"
+#include "Protocol.h"
+#include "peoples_url_parser.h"
+#include "networkStatus.h"
+#include "status_error_codes.h"
+#include "fnjson.h"
+#include "ProtocolParser.h"
 
 /**
  * Number of devices to expose via SIO, becomes 0x71 to 0x70 + NUM_DEVICES - 1
@@ -46,7 +48,9 @@ public:
     /**
      * The spinlock for the ESP32 hardware timers. Used for interrupt rate limiting.
      */
+#ifdef ESP_PLATFORM
     portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
+#endif
 
     /**
      * Toggled by the rate limiting timer to indicate that the PROCEED interrupt should
@@ -143,22 +147,22 @@ private:
     /**
      * The Receive buffer for this N: device
      */
-    string *receiveBuffer = nullptr;
+    std::string *receiveBuffer = nullptr;
 
     /**
      * The transmit buffer for this N: device
      */
-    string *transmitBuffer = nullptr;
+    std::string *transmitBuffer = nullptr;
 
     /**
      * The special buffer for this N: device
      */
-    string *specialBuffer = nullptr;
+    std::string *specialBuffer = nullptr;
 
     /**
-     * The EdUrlParser object used to hold/process a URL
+     * The PeoplesUrlParser object used to hold/process a URL
      */
-    EdUrlParser *urlParser = nullptr;
+    PeoplesUrlParser *urlParser = nullptr;
 
     /**
      * Instance of currently open network protocol
@@ -178,17 +182,21 @@ private:
     /**
      * ESP timer handle for the Interrupt rate limiting timer
      */
+#ifdef ESP_PLATFORM
     esp_timer_handle_t rateTimerHandle = nullptr;
+#else
+    uint64_t lastInterruptMs;
+#endif
 
     /**
      * Devicespec passed to us, e.g. N:HTTP://WWW.GOOGLE.COM:80/
      */
-    string deviceSpec;
+    std::string deviceSpec;
 
     /**
      * The currently set Prefix for this N: device, set by SIO call 0x2C
      */
-    string prefix;
+    std::string prefix;
 
     /**
      * The AUX1 value used for OPEN.
@@ -214,17 +222,21 @@ private:
     /**
      * The login to use for a protocol action
      */
-    string login;
+    std::string login;
 
     /**
      * The password to use for a protocol action
      */
-    string password;
+    std::string password;
 
     /**
-     * Timer Rate for interrupt timer
+     * Timer Rate for interrupt timer (ms)
      */
+#ifdef ESP_PLATFORM
     int timerRate = 100;
+#else
+    int timerRate = 20;
+#endif
 
     /**
      * The channel mode for the currently open SIO device. By default, it is PROTOCOL, which passes
@@ -370,6 +382,13 @@ private:
      * Called to pulse the PROCEED interrupt, rate limited by the interrupt timer.
      */
     void sio_assert_interrupt();
+
+#ifndef ESP_PLATFORM
+    /**
+     * Called to clear the PROCEED interrupt
+     */
+    void sio_clear_interrupt();
+#endif
 
     /**
      * @brief Perform the inquiry, handle both local and protocol commands.
