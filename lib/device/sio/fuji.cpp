@@ -2,24 +2,31 @@
 
 #include "fuji.h"
 
+#ifdef ESP_PLATFORM
 #include <driver/ledc.h>
+#endif
 
 #include <cstdint>
 #include <cstring>
+#ifndef ESP_PLATFORM // why ESP does not like it? it throws a linker error undefined reference to 'basename'
+#include <libgen.h>
+#endif
+#include <errno.h>
+#include "compat_string.h"
 
 #include "../../../include/debug.h"
 
 #include "fnSystem.h"
 #include "fnConfig.h"
 #include "fsFlash.h"
-#include "fnFsSPIFFS.h"
 #include "fnFsTNFS.h"
 #include "fnWiFi.h"
 
 #include "led.h"
 #include "utils.h"
 
-#include "base64.h"
+#include "../../encoding/base64.h"
+#include "../../encoding/hash.h"
 
 #define ADDITIONAL_DETAILS_BYTES 10
 
@@ -329,6 +336,7 @@ void sioFuji::sio_net_get_wifi_enabled()
 }
 
 // Mount Server
+#ifdef ESP_PLATFORM // TODO merge
 void sioFuji::sio_mount_host()
 {
     Debug_println("Fuji cmd: MOUNT HOST");
@@ -347,8 +355,28 @@ void sioFuji::sio_mount_host()
     else
         sio_complete();
 }
+#else
+int sioFuji::sio_mount_host(bool siomode, int slot)
+{
+    Debug_println("Fuji cmd: MOUNT HOST");
+
+    unsigned char hostSlot = siomode ? cmdFrame.aux1 : slot;
+
+    // Make sure we weren't given a bad hostSlot
+    if (!_validate_host_slot(hostSlot, "sio_tnfs_mount_hosts"))
+    {
+        return _on_error(siomode);
+    }
+
+    if (!_fnHosts[hostSlot].mount())
+        return _on_error(siomode);
+    else
+        return _on_ok(siomode);
+}
+#endif
 
 // Disk Image Mount
+#ifdef ESP_PLATFORM  // TODO merge
 void sioFuji::sio_disk_image_mount()
 {
     // TAPE or CASSETTE handling: this function can also mount CAS and WAV files
@@ -410,6 +438,66 @@ void sioFuji::sio_disk_image_mount()
 
     sio_complete();
 }
+#else
+int sioFuji::sio_disk_image_mount(bool siomode, int slot)
+{
+    // TAPE or CASSETTE handling: this function can also mount CAS and WAV files
+    // to the C: device. Everything stays the same here and the mounting
+    // where all the magic happens is done in the sioDisk::mount() function.
+    // This function opens the file, so cassette does not need to open the file.
+    // Cassette needs the file pointer and file size.
+
+    uint8_t deviceSlot = siomode ? cmdFrame.aux1 : slot;
+    uint8_t options = siomode ? cmdFrame.aux2 : _fnDisks[slot].access_mode; // DISK_ACCESS_MODE
+
+    Debug_printf("Fuji cmd: MOUNT IMAGE 0x%02X 0x%02X\n", deviceSlot, options);
+
+    // TODO: Implement FETCH?
+    char flag[4] = {'r', 'b', 0, 0};
+    if (options == DISK_ACCESS_MODE_WRITE)
+        flag[2] = '+';
+
+    // Make sure we weren't given a bad hostSlot
+    if (!_validate_device_slot(deviceSlot))
+    {
+        return _on_error(siomode);
+    }
+
+    if (!_validate_host_slot(_fnDisks[deviceSlot].host_slot))
+    {
+        return _on_error(siomode);
+    }
+
+    // A couple of reference variables to make things much easier to read...
+    fujiDisk &disk = _fnDisks[deviceSlot];
+    fujiHost &host = _fnHosts[disk.host_slot];
+
+    Debug_printf("Selecting '%s' from host #%u as %s on D%u:\n",
+                 disk.filename, disk.host_slot, flag, deviceSlot + 1);
+
+    // TODO: Refactor along with mount disk image.
+    disk.disk_dev.host = &host;
+
+    disk.fileh = host.filehandler_open(disk.filename, disk.filename, sizeof(disk.filename), flag);
+
+    if (disk.fileh == nullptr)
+    {
+        return _on_error(siomode);
+    }
+
+    // We've gotten this far, so make sure our bootable CONFIG disk is disabled
+    boot_config = false;
+    status_wait_count = 0;
+
+    // We need the file size for loading XEX files and for CASSETTE, so get that too
+    disk.disk_size = host.file_size(disk.fileh);
+
+    // And now mount it
+    disk.disk_type = disk.disk_dev.mount(disk.fileh, disk.filename, disk.disk_size);
+
+    return _on_ok(siomode);
+}
+#endif
 
 // Toggle boot config on/off, aux1=0 is disabled, aux1=1 is enabled
 void sioFuji::sio_set_boot_config()
@@ -422,12 +510,17 @@ void sioFuji::sio_set_boot_config()
 void sioFuji::sio_copy_file()
 {
     uint8_t csBuf[256];
-    string copySpec;
-    string sourcePath;
-    string destPath;
+    std::string copySpec;
+    std::string sourcePath;
+    std::string destPath;
     uint8_t ck;
+#ifdef ESP_PLATFORM
     FILE *sourceFile;
     FILE *destFile;
+#else
+    FileHandler *sourceFile;
+    FileHandler *destFile;
+#endif
     char *dataBuf;
     unsigned char sourceSlot;
     unsigned char destSlot;
@@ -451,12 +544,12 @@ void sioFuji::sio_copy_file()
         return;
     }
 
-    copySpec = string((char *)csBuf);
+    copySpec = std::string((char *)csBuf);
 
     Debug_printf("copySpec: %s\n", copySpec.c_str());
 
     // Check for malformed copyspec.
-    if (copySpec.empty() || copySpec.find_first_of("|") == string::npos)
+    if (copySpec.empty() || copySpec.find_first_of("|") == std::string::npos)
     {
         sio_error();
         free(dataBuf);
@@ -490,7 +583,7 @@ void sioFuji::sio_copy_file()
     if (destPath.back() == '/')
     {
         Debug_printf("append source file\n");
-        string sourceFilename = sourcePath.substr(sourcePath.find_last_of("/") + 1);
+        std::string sourceFilename = sourcePath.substr(sourcePath.find_last_of("/") + 1);
         destPath += sourceFilename;
     }
 
@@ -499,7 +592,11 @@ void sioFuji::sio_copy_file()
     _fnHosts[destSlot].mount();
 
     // Open files...
+#ifdef ESP_PLATFORM
     sourceFile = _fnHosts[sourceSlot].file_open(sourcePath.c_str(), (char *)sourcePath.c_str(), sourcePath.size() + 1, "r");
+#else
+    sourceFile = _fnHosts[sourceSlot].filehandler_open(sourcePath.c_str(), (char *)sourcePath.c_str(), sourcePath.size() + 1, "rb");
+#endif
 
     if (sourceFile == nullptr)
     {
@@ -508,12 +605,20 @@ void sioFuji::sio_copy_file()
         return;
     }
 
+#ifdef ESP_PLATFORM
     destFile = _fnHosts[destSlot].file_open(destPath.c_str(), (char *)destPath.c_str(), destPath.size() + 1, "w");
+#else
+    destFile = _fnHosts[destSlot].filehandler_open(destPath.c_str(), (char *)destPath.c_str(), destPath.size() + 1, "wb");
+#endif
 
     if (destFile == nullptr)
     {
         sio_error();
+#ifdef ESP_PLATFORM
         fclose(sourceFile);
+#else
+        sourceFile->close();
+#endif
         free(dataBuf);
         return;
     }
@@ -525,7 +630,11 @@ void sioFuji::sio_copy_file()
     bool err = false;
     do
     {
+#ifdef ESP_PLATFORM
         readCount = fread(dataBuf, 1, 532, sourceFile);
+#else
+        readCount = sourceFile->read(dataBuf, 1, 532);
+#endif
         readTotal += readCount;
         // Check if we got enough bytes on the read
         if (readCount < 532 && readTotal != expected)
@@ -533,7 +642,11 @@ void sioFuji::sio_copy_file()
             err = true;
             break;
         }
+#ifdef ESP_PLATFORM
         writeCount = fwrite(dataBuf, 1, readCount, destFile);
+#else
+        writeCount = destFile->write(dataBuf, 1, readCount);
+#endif
         // Check if we sent enough bytes on the write
         if (writeCount != readCount)
         {
@@ -556,13 +669,22 @@ void sioFuji::sio_copy_file()
     }
 
     // copyEnd:
+#ifdef ESP_PLATFORM
     fclose(sourceFile);
     fclose(destFile);
+#else
+    sourceFile->close();
+    destFile->close();
+#endif
     free(dataBuf);
 }
 
 // Mount all
+#ifdef ESP_PLATFORM
 void sioFuji::mount_all()
+#else
+int sioFuji::mount_all(bool siomode)
+#endif
 {
     bool nodisks = true; // Check at the end if no disks are in a slot and disable config
 
@@ -570,10 +692,17 @@ void sioFuji::mount_all()
     {
         fujiDisk &disk = _fnDisks[i];
         fujiHost &host = _fnHosts[disk.host_slot];
+#ifdef ESP_PLATFORM
         char flag[3] = {'r', 0, 0};
 
         if (disk.access_mode == DISK_ACCESS_MODE_WRITE)
             flag[1] = '+';
+#else
+        char flag[4] = {'r', 'b', 0, 0};
+
+        if (disk.access_mode == DISK_ACCESS_MODE_WRITE)
+            flag[2] = '+';
+#endif
 
         if (disk.host_slot != INVALID_HOST_SLOT)
         {
@@ -581,13 +710,18 @@ void sioFuji::mount_all()
 
             if (host.mount() == false)
             {
+#ifdef ESP_PLATFORM
                 sio_error();
                 return;
+#else
+                return _on_error(siomode);
+#endif
             }
 
             Debug_printf("Selecting '%s' from host #%u as %s on D%u:\n",
                          disk.filename, disk.host_slot, flag, i + 1);
 
+#ifdef ESP_PLATFORM
             disk.fileh = host.file_open(disk.filename, disk.filename, sizeof(disk.filename), flag);
 
             if (disk.fileh == nullptr)
@@ -595,6 +729,14 @@ void sioFuji::mount_all()
                 sio_error();
                 return;
             }
+#else
+            disk.fileh = host.filehandler_open(disk.filename, disk.filename, sizeof(disk.filename), flag);
+
+            if (disk.fileh == nullptr)
+            {
+                return _on_error(siomode);
+            }
+#endif
 
             // We've gotten this far, so make sure our bootable CONFIG disk is disabled
             boot_config = false;
@@ -618,7 +760,11 @@ void sioFuji::mount_all()
         boot_config = false;
     }
 
+#ifdef ESP_PLATFORM
     sio_complete();
+#else
+    return _on_ok(siomode);
+#endif
 }
 
 // Set boot mode
@@ -740,7 +886,11 @@ void sioFuji::sio_write_app_key()
     // Make sure we have a "/FujiNet" directory, since that's where we're putting these files
     fnSDFAT.create_path("/FujiNet");
 
+#ifdef ESP_PLATFORM
     FILE *fOut = fnSDFAT.file_open(filename, "w");
+#else
+    FILE *fOut = fnSDFAT.file_open(filename, FILE_WRITE);
+#endif
     if (fOut == nullptr)
     {
         Debug_printf("Failed to open/create output file: errno=%d\n", errno);
@@ -754,7 +904,7 @@ void sioFuji::sio_write_app_key()
 
     if (count != keylen)
     {
-        Debug_printf("Only wrote %u bytes of expected %hu, errno=%d\n", count, keylen, e);
+        Debug_printf("Only wrote %u bytes of expected %hu, errno=%d\n", (unsigned)count, keylen, e);
         sio_error();
     }
 
@@ -798,7 +948,11 @@ void sioFuji::sio_read_app_key()
 
     Debug_printf("Reading appkey from \"%s\"\n", filename);
 
+#ifdef ESP_PLATFORM
     FILE *fIn = fnSDFAT.file_open(filename, "r");
+#else
+    FILE *fIn = fnSDFAT.file_open(filename, FILE_READ);
+#endif
     if (fIn == nullptr)
     {
         Debug_printf("Failed to open input file: errno=%d\n", errno);
@@ -809,7 +963,7 @@ void sioFuji::sio_read_app_key()
     size_t count = fread(response.value, 1, sizeof(response.value), fIn);
 
     fclose(fIn);
-    Debug_printf("Read %d bytes from input file\n", count);
+    Debug_printf("Read %u bytes from input file\n", (unsigned)count);
 
     response.size = count;
 
@@ -844,10 +998,30 @@ void sioFuji::debug_tape()
     }
 }
 
+#ifndef ESP_PLATFORM
+int sioFuji::_on_ok(bool siomode)
+{
+    if (siomode) sio_complete();
+    return 0;
+}
+
+int sioFuji::_on_error(bool siomode, int rc)
+{
+    if (siomode) sio_error();
+    return rc;
+}
+#endif
+
 // Disk Image Unmount
+#ifdef ESP_PLATFORM
 void sioFuji::sio_disk_image_umount()
 {
     uint8_t deviceSlot = cmdFrame.aux1;
+#else
+int sioFuji::sio_disk_image_umount(bool siomode, int slot)
+{
+    uint8_t deviceSlot = siomode ? cmdFrame.aux1 : slot;
+#endif
 
     Debug_printf("Fuji cmd: UNMOUNT IMAGE 0x%02X\n", deviceSlot);
 
@@ -869,6 +1043,7 @@ void sioFuji::sio_disk_image_umount()
     // {
     // }
     // Invalid slot
+#ifdef ESP_PLATFORM
     else
     {
         sio_error();
@@ -876,6 +1051,14 @@ void sioFuji::sio_disk_image_umount()
     }
 
     sio_complete();
+#else
+    else
+    {
+        return _on_error(siomode);
+    }
+
+    return _on_ok(siomode);
+#endif
 }
 
 // Disk Image Rotate
@@ -902,12 +1085,12 @@ void sioFuji::image_rotate()
         for (int n = count; n > 0; n--)
         {
             int swap = _fnDisks[n - 1].disk_dev.id();
-            Debug_printf("setting slot %d to ID %hx\n", n, swap);
+            Debug_printf("setting slot %d to ID %x\n", n, swap);
             _sio_bus->changeDeviceId(&_fnDisks[n].disk_dev, swap);
         }
 
         // The first slot gets the device ID of the last slot
-        Debug_printf("setting slot %d to ID %hx\n", 0, last_id);
+        Debug_printf("setting slot %d to ID %x\n", 0, last_id);
         _sio_bus->changeDeviceId(&_fnDisks[0].disk_dev, last_id);
 
         // Say whatever disk is in D1:
@@ -1094,7 +1277,7 @@ void sioFuji::sio_read_directory_block()
             }
 
             int filelen = util_ellipsize(f->filename, filenamedest, bufsize);
-            additional_size = filelen + is_extended ? ADDITIONAL_DETAILS_BYTES : 0;
+            additional_size = filelen + (is_extended ? ADDITIONAL_DETAILS_BYTES : 0);
 
             // Add a slash at the end of directory entries
             if (f->isDir && filelen < (bufsize - 2))
@@ -1132,7 +1315,7 @@ void sioFuji::sio_read_directory_block()
                 data_block.push_back(static_cast<uint8_t>(current_entry[i]));
             }
             // Then add the string part
-            int s_len = std::strlen(current_entry + ADDITIONAL_DETAILS_BYTES);
+            //int s_len = std::strlen(current_entry + ADDITIONAL_DETAILS_BYTES);
             data_block.insert(data_block.end(), current_entry + ADDITIONAL_DETAILS_BYTES, current_entry + ADDITIONAL_DETAILS_BYTES + std::strlen(current_entry + ADDITIONAL_DETAILS_BYTES));
         } else {
             data_block.insert(data_block.end(), current_entry, current_entry + std::strlen(current_entry));
@@ -1435,7 +1618,11 @@ void sioFuji::sio_new_disk()
         return;
     }
 
+#ifdef ESP_PLATFORM
     disk.fileh = host.file_open(disk.filename, disk.filename, sizeof(disk.filename), "w");
+#else
+    disk.fileh = host.filehandler_open(disk.filename, disk.filename, sizeof(disk.filename), FILE_WRITE);
+#endif
     if (disk.fileh == nullptr)
     {
         Debug_printf("sio_new_disk Couldn't open file for writing: \"%s\"\n", disk.filename);
@@ -1444,7 +1631,11 @@ void sioFuji::sio_new_disk()
     }
 
     bool ok = disk.disk_dev.write_blank(disk.fileh, newDisk.sectorSize, newDisk.numSectors);
+#ifdef ESP_PLATFORM
     fclose(disk.fileh);
+#else
+    disk.fileh->close();
+#endif
 
     if (ok == false)
     {
@@ -1728,7 +1919,7 @@ void sioFuji::_populate_config_from_slots()
     }
 }
 
-// AUX1 is our index value (from 0 to SIO_HISPEED_LOWEST_INDEX)
+// AUX1 is our index value (from 0 to SIO_HISPEED_LOWEST_INDEX, for FN-PC 0 .. 10, 16)
 // AUX2 requests a save of the change if set to 1
 void sioFuji::sio_set_hsio_index()
 {
@@ -1738,7 +1929,11 @@ void sioFuji::sio_set_hsio_index()
     uint8_t index = cmdFrame.aux1;
 
     // Make sure it's a valid value
+#ifdef ESP_PLATFORM
     if (index > SIO_HISPEED_LOWEST_INDEX)
+#else
+    if (index > SIO_HISPEED_LOWEST_INDEX && index != SIO_HISPEED_x2_INDEX) // accept 0 .. 10, 16
+#endif
     {
         sio_error();
         return;
@@ -1849,6 +2044,7 @@ void sioFuji::insert_boot_device(uint8_t d)
     std::string altconfigfile = Config.get_config_filename();
     const char *alt_config_atr = altconfigfile.c_str();
     const char *mount_all_atr = "/mount-and-boot.atr";
+#ifdef ESP_PLATFORM // TODO merge
     FILE *fBoot;
 
     _bootDisk.unmount();
@@ -1884,6 +2080,59 @@ void sioFuji::insert_boot_device(uint8_t d)
         }
         break;
     }
+#else
+    const char *lobby_tnfs = "tnfs.fujinet.online";
+    const char *lobby_xex = "/ATARI/_lobby.xex";
+    const char *boot_img;
+
+    FileHandler *fBoot = nullptr;
+
+    _bootDisk.unmount();
+
+    switch (d)
+    {
+    case 0:
+        if( !altconfigfile.empty() && fnSDFAT.running() != false )
+        {
+            fBoot = fnSDFAT.filehandler_open(alt_config_atr);
+            // if open fails, fall back to default config
+            if (fBoot != nullptr)
+            {
+                Debug_printf("Using Alternate CONFIG %s\n", alt_config_atr);
+                boot_img = alt_config_atr;
+                break;
+            }
+        }
+        boot_img = config_atr;
+        fBoot = fsFlash.filehandler_open(boot_img);
+        break;
+    case 1:
+        boot_img = mount_all_atr;
+        fBoot = fsFlash.filehandler_open(boot_img);
+        break;
+    case 2:
+        Debug_printf("Mounting lobby server\n");
+        if (fnTNFS.start(lobby_tnfs))
+        {
+            Debug_printf("opening lobby.\n");
+            boot_img = lobby_xex;
+            fBoot = fnTNFS.filehandler_open(boot_img);
+        }
+        break;
+    default:
+        Debug_printf("Invalid boot mode: %d\n", d);
+        return;
+    }
+
+    // check if open was successfull
+    if (fBoot == nullptr)
+    {
+        Debug_printf("Failed to open boot disk image: %s\n", boot_img);
+        return;
+    }
+
+    _bootDisk.mount(fBoot, boot_img ,0);
+#endif
 
     _bootDisk.is_config_device = true;
     _bootDisk.device_active = false;
@@ -1962,21 +2211,9 @@ void sioFuji::sio_base64_encode_input()
         return;
     }
 
-    unsigned char *p = (unsigned char *)malloc(len);
-
-    if (!p)
-    {
-        Debug_printf("Could not allocate %u bytes for buffer. Aborting.\n", len);
-        sio_error();
-        return;
-    }
-
-    bus_to_peripheral(p, len);
-
-    base64_buffer += string((const char *)p, len);
-
-    free(p);
-
+    std::vector<unsigned char> p(len);
+    bus_to_peripheral(p.data(), len);
+    base64.base64_buffer += std::string((const char *)p.data(), len);
     sio_complete();
 }
 
@@ -1986,8 +2223,7 @@ void sioFuji::sio_base64_encode_compute()
 
     Debug_printf("FUJI: BASE64 ENCODE COMPUTE\n");
 
-    char *p = base64_encode(base64_buffer.c_str(), base64_buffer.size(), &out_len);
-
+    std::unique_ptr<char[]> p = Base64::encode(base64.base64_buffer.c_str(), base64.base64_buffer.size(), &out_len);
     if (!p)
     {
         Debug_printf("base64_encode compute failed\n");
@@ -1995,9 +2231,8 @@ void sioFuji::sio_base64_encode_compute()
         return;
     }
 
-    base64_buffer.clear();
-    base64_buffer = string(p, out_len);
-    free(p);
+    base64.base64_buffer.clear();
+    base64.base64_buffer = std::string(p.get(), out_len);
 
     Debug_printf("Resulting BASE64 encoded data is: %u bytes\n", out_len);
     sio_complete();
@@ -2007,7 +2242,7 @@ void sioFuji::sio_base64_encode_length()
 {
     Debug_printf("FUJI: BASE64 ENCODE LENGTH\n");
 
-    size_t l = base64_buffer.length();
+    size_t l = base64.base64_buffer.length();
     uint8_t response[4] = {
         (uint8_t)(l >>  0),
         (uint8_t)(l >>  8),
@@ -2030,37 +2265,29 @@ void sioFuji::sio_base64_encode_output()
 {
     Debug_printf("FUJI: BASE64 ENCODE OUTPUT\n");
 
-    size_t l = sio_get_aux();
+    size_t len = sio_get_aux();
 
-    if (!l)
+    if (!len)
     {
         Debug_printf("Refusing to send a zero byte buffer. Aborting\n");
         return;
     }
-    else if (l > base64_buffer.length())
+    else if (len > base64.base64_buffer.length())
     {
-        Debug_printf("Requested %u bytes, but buffer is only %u bytes, aborting.\n", l, base64_buffer.length());
+        Debug_printf("Requested %u bytes, but buffer is only %u bytes, aborting.\n", len, base64.base64_buffer.length());
         return;
     }
     else
     {
-        Debug_printf("Requested %u bytes\n", l);
+        Debug_printf("Requested %u bytes\n", len);
     }
 
-    unsigned char *p = (unsigned char *)malloc(l);
+    std::vector<unsigned char> p(len);
+    std::memcpy(p.data(), base64.base64_buffer.data(), len);
+    base64.base64_buffer.erase(0, len);
+    base64.base64_buffer.shrink_to_fit();
 
-    if (!p)
-    {
-        Debug_printf("Could not allocate %u bytes from heap, aborting.\n", l);
-        return;
-    }
-
-    memcpy(p, base64_buffer.data(), l);
-    base64_buffer.erase(0, l);
-    base64_buffer.shrink_to_fit();
-
-    bus_to_computer(p, l, false);
-    free(p);
+    bus_to_computer(p.data(), len, false);
 }
 
 void sioFuji::sio_base64_decode_input()
@@ -2076,21 +2303,9 @@ void sioFuji::sio_base64_decode_input()
         return;
     }
 
-    unsigned char *p = (unsigned char *)malloc(len);
-
-    if (!p)
-    {
-        Debug_printf("Could not allocate %u bytes for buffer. Aborting.\n", len);
-        sio_error();
-        return;
-    }
-
-    bus_to_peripheral(p, len);
-
-    base64_buffer += string((const char *)p, len);
-
-    free(p);
-
+    std::vector<unsigned char> p(len);
+    bus_to_peripheral(p.data(), len);
+    base64.base64_buffer += std::string((const char *)p.data(), len);
     sio_complete();
 }
 
@@ -2100,8 +2315,7 @@ void sioFuji::sio_base64_decode_compute()
 
     Debug_printf("FUJI: BASE64 DECODE COMPUTE\n");
 
-    unsigned char *p = base64_decode(base64_buffer.c_str(), base64_buffer.size(), &out_len);
-
+    std::unique_ptr<unsigned char[]> p = Base64::decode(base64.base64_buffer.c_str(), base64.base64_buffer.size(), &out_len);
     if (!p)
     {
         Debug_printf("base64_encode compute failed\n");
@@ -2109,9 +2323,8 @@ void sioFuji::sio_base64_decode_compute()
         return;
     }
 
-    base64_buffer.clear();
-    base64_buffer = string((const char *)p, out_len);
-    free(p);
+    base64.base64_buffer.clear();
+    base64.base64_buffer = std::string((const char *)p.get(), out_len);
 
     Debug_printf("Resulting BASE64 encoded data is: %u bytes\n", out_len);
     sio_complete();
@@ -2121,22 +2334,22 @@ void sioFuji::sio_base64_decode_length()
 {
     Debug_printf("FUJI: BASE64 DECODE LENGTH\n");
 
-    size_t l = base64_buffer.length();
+    size_t len = base64.base64_buffer.length();
     uint8_t response[4] = {
-        (uint8_t)(l >>  0),
-        (uint8_t)(l >>  8),
-        (uint8_t)(l >>  16),
-        (uint8_t)(l >>  24)
+        (uint8_t)(len >>  0),
+        (uint8_t)(len >>  8),
+        (uint8_t)(len >>  16),
+        (uint8_t)(len >>  24)
     };
 
-    if (!l)
+    if (!len)
     {
         Debug_printf("BASE64 buffer is 0 bytes, sending error.\n");
         bus_to_computer(response, sizeof(response), true);
         return;
     }
 
-    Debug_printf("base64 buffer length: %u bytes\n", l);
+    Debug_printf("base64 buffer length: %u bytes\n", len);
 
     bus_to_computer(response, sizeof(response), false);
 }
@@ -2145,39 +2358,30 @@ void sioFuji::sio_base64_decode_output()
 {
     Debug_printf("FUJI: BASE64 DECODE OUTPUT\n");
 
-    size_t l = sio_get_aux();
+    size_t len = sio_get_aux();
 
-    if (!l)
+    if (!len)
     {
         Debug_printf("Refusing to send a zero byte buffer. Aborting\n");
         sio_error();
         return;
     }
-    else if (l > base64_buffer.length())
+    else if (len > base64.base64_buffer.length())
     {
-        Debug_printf("Requested %u bytes, but buffer is only %u bytes, aborting.\n", l, base64_buffer.length());
+        Debug_printf("Requested %u bytes, but buffer is only %u bytes, aborting.\n", len, base64.base64_buffer.length());
         sio_error();
         return;
     }
     else
     {
-        Debug_printf("Requested %u bytes\n", l);
+        Debug_printf("Requested %u bytes\n", len);
     }
 
-    unsigned char *p = (unsigned char *)malloc(l);
-
-    if (!p)
-    {
-        Debug_printf("Could not allocate %u bytes from heap, aborting.\n", l);
-        sio_error();
-        return;
-    }
-
-    memcpy(p, base64_buffer.data(), l);
-    base64_buffer.erase(0, l);
-    base64_buffer.shrink_to_fit();
-    bus_to_computer(p, l, false);
-    free(p);
+    std::vector<unsigned char> p(len);
+    memcpy(p.data(), base64.base64_buffer.data(), len);
+    base64.base64_buffer.erase(0, len);
+    base64.base64_buffer.shrink_to_fit();
+    bus_to_computer(p.data(), len, false);
 }
 
 void sioFuji::sio_hash_input()
@@ -2193,20 +2397,9 @@ void sioFuji::sio_hash_input()
         return;
     }
 
-    unsigned char *p = (unsigned char *)malloc(len);
-
-    if (!p)
-    {
-        Debug_printf("Could not allocate %u bytes for buffer. Aborting.\n");
-        sio_error();
-        return;
-    }
-
-    bus_to_peripheral(p, len);
-
-    base64_buffer += string((const char *)p, len);
-
-    free(p);
+    std::vector<unsigned char> p(len);
+    bus_to_peripheral(p.data(), len);
+    base64.base64_buffer += std::string((const char *)p.data(), len);
 
     sio_complete();
 }
@@ -2215,65 +2408,11 @@ void sioFuji::sio_hash_compute()
 {
     uint16_t m = hash_mode = sio_get_aux();
 
-    // Initialize hash context
-    switch (m)
-    {
-    case 0: // md5
-        // Not implemented
-        break;
-    case 1: // sha1
-        mbedtls_sha1_init(&_sha1);
-        mbedtls_sha1_starts(&_sha1);
-        break;
-    case 2: // sha256
-        mbedtls_sha256_init(&_sha256);
-        mbedtls_sha256_starts(&_sha256,0);
-        break;
-    case 3: // sha512
-        mbedtls_sha512_init(&_sha512);
-        mbedtls_sha512_starts(&_sha512,0);
-        break;
-    }
+    Debug_printf("FUJI: HASH COMPUTE\n");
 
-    // Update
-    switch (m)
-    {
-    case 0: // MD5
-        // Not implemented
-        break;
-    case 1: // SHA1
-        mbedtls_sha1_update(&_sha1, (const unsigned char *)base64_buffer.data(), base64_buffer.size());
-        break;
-    case 2: // SHA256
-        mbedtls_sha256_update(&_sha256, (const unsigned char *)base64_buffer.data(), base64_buffer.size());
-        break;
-    case 3: // SHA512
-        mbedtls_sha512_update(&_sha512, (const unsigned char *)base64_buffer.data(), base64_buffer.size());
-        break;
-    }
-
-    // Clean up
-    switch (m)
-    {
-    case 0: // MD5
-        // Not implemented
-        break;
-    case 1: // SHA1
-        mbedtls_sha1_finish(&_sha1, _sha1_output);
-        mbedtls_sha1_free(&_sha1);
-        break;
-    case 2: // SHA256
-        mbedtls_sha256_finish(&_sha256, _sha256_output);
-        mbedtls_sha256_free(&_sha256);
-        break;
-    case 3: // SHA512
-        mbedtls_sha512_finish(&_sha512, _sha512_output);
-        mbedtls_sha512_free(&_sha512);
-        break;
-    }
-
-    base64_buffer.clear();
-    base64_buffer.shrink_to_fit();
+    hasher.compute(m, base64.base64_buffer);
+    base64.base64_buffer.clear();
+    base64.base64_buffer.shrink_to_fit();
 
     sio_complete();
 }
@@ -2307,193 +2446,13 @@ void sioFuji::sio_hash_length()
 
 void sioFuji::sio_hash_output()
 {
-    uint8_t o[129];
-    uint16_t olen=0;
+    uint16_t olen = 0;
     uint16_t m = sio_get_aux();
 
-    memset(o, 0x00, sizeof(o));
+    Debug_printf("FUJI: HASH OUTPUT\n");
 
-    switch (hash_mode)
-    {
-    case 0: // MD5
-        olen = 16;
-
-        if (m == 0)
-            memcpy(o, _md5_output, 16);
-        else if (m == 1)
-        {
-            olen <<= 1;
-            sprintf((char *)o, "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
-                    _md5_output[0],
-                    _md5_output[1],
-                    _md5_output[2],
-                    _md5_output[3],
-                    _md5_output[4],
-                    _md5_output[5],
-                    _md5_output[6],
-                    _md5_output[7],
-                    _md5_output[8],
-                    _md5_output[9],
-                    _md5_output[10],
-                    _md5_output[11],
-                    _md5_output[12],
-                    _md5_output[13],
-                    _md5_output[14],
-                    _md5_output[15]);
-        }
-        break;
-    case 1: // SHA1
-        olen = 20;
-
-        if (m == 0)
-            memcpy(o, _sha1_output, 20);
-        else if (m == 1)
-        {
-            olen <<= 1;
-            sprintf((char *)o, "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
-                    _sha1_output[0],
-                    _sha1_output[1],
-                    _sha1_output[2],
-                    _sha1_output[3],
-                    _sha1_output[4],
-                    _sha1_output[5],
-                    _sha1_output[6],
-                    _sha1_output[7],
-                    _sha1_output[8],
-                    _sha1_output[9],
-                    _sha1_output[10],
-                    _sha1_output[11],
-                    _sha1_output[12],
-                    _sha1_output[13],
-                    _sha1_output[14],
-                    _sha1_output[15],
-                    _sha1_output[16],
-                    _sha1_output[17],
-                    _sha1_output[18],
-                    _sha1_output[19]);
-        }
-        break;
-    case 2: // SHA256
-        olen = 32;
-
-        if (m == 0)
-            memcpy(o, _sha256_output, 32);
-        else if (m == 1)
-        {
-            olen <<= 1;
-            sprintf((char *)o, "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
-                    _sha256_output[0],
-                    _sha256_output[1],
-                    _sha256_output[2],
-                    _sha256_output[3],
-                    _sha256_output[4],
-                    _sha256_output[5],
-                    _sha256_output[6],
-                    _sha256_output[7],
-                    _sha256_output[8],
-                    _sha256_output[9],
-                    _sha256_output[10],
-                    _sha256_output[11],
-                    _sha256_output[12],
-                    _sha256_output[13],
-                    _sha256_output[14],
-                    _sha256_output[15],
-                    _sha256_output[16],
-                    _sha256_output[17],
-                    _sha256_output[18],
-                    _sha256_output[19],
-                    _sha256_output[20],
-                    _sha256_output[21],
-                    _sha256_output[22],
-                    _sha256_output[23],
-                    _sha256_output[24],
-                    _sha256_output[25],
-                    _sha256_output[26],
-                    _sha256_output[27],
-                    _sha256_output[28],
-                    _sha256_output[29],
-                    _sha256_output[30],
-                    _sha256_output[31]);
-        }
-        break;
-    case 3: // SHA512
-        olen = 64;
-
-        if (m == 0)
-            memcpy(o, _sha512_output, 64);
-        else if (m == 1)
-        {
-            olen <<= 1;
-            sprintf((char *)o, "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
-                    _sha512_output[0],
-                    _sha512_output[1],
-                    _sha512_output[2],
-                    _sha512_output[3],
-                    _sha512_output[4],
-                    _sha512_output[5],
-                    _sha512_output[6],
-                    _sha512_output[7],
-                    _sha512_output[8],
-                    _sha512_output[9],
-                    _sha512_output[10],
-                    _sha512_output[11],
-                    _sha512_output[12],
-                    _sha512_output[13],
-                    _sha512_output[14],
-                    _sha512_output[15],
-                    _sha512_output[16],
-                    _sha512_output[17],
-                    _sha512_output[18],
-                    _sha512_output[19],
-                    _sha512_output[20],
-                    _sha512_output[21],
-                    _sha512_output[22],
-                    _sha512_output[23],
-                    _sha512_output[24],
-                    _sha512_output[25],
-                    _sha512_output[26],
-                    _sha512_output[27],
-                    _sha512_output[28],
-                    _sha512_output[29],
-                    _sha512_output[30],
-                    _sha512_output[31],
-                    _sha512_output[32],
-                    _sha512_output[33],
-                    _sha512_output[34],
-                    _sha512_output[35],
-                    _sha512_output[36],
-                    _sha512_output[37],
-                    _sha512_output[38],
-                    _sha512_output[39],
-                    _sha512_output[40],
-                    _sha512_output[41],
-                    _sha512_output[42],
-                    _sha512_output[43],
-                    _sha512_output[44],
-                    _sha512_output[45],
-                    _sha512_output[46],
-                    _sha512_output[47],
-                    _sha512_output[48],
-                    _sha512_output[49],
-                    _sha512_output[50],
-                    _sha512_output[51],
-                    _sha512_output[52],
-                    _sha512_output[53],
-                    _sha512_output[54],
-                    _sha512_output[55],
-                    _sha512_output[56],
-                    _sha512_output[57],
-                    _sha512_output[58],
-                    _sha512_output[59],
-                    _sha512_output[60],
-                    _sha512_output[61],
-                    _sha512_output[62],
-                    _sha512_output[63]);
-        }
-        break;
-    }
-
-    bus_to_computer(o,olen,false);
+    std::vector<uint8_t> o = hasher.hash_output(m, hash_mode, olen);
+    bus_to_computer(o.data(), olen, false);
 }
 
 void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
@@ -2530,7 +2489,7 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_net_scan_result();
         break;
     case FUJICMD_SET_SSID:
-        sio_ack();
+        sio_late_ack();
         sio_net_set_ssid();
         break;
     case FUJICMD_GET_SSID:
@@ -2550,7 +2509,7 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_disk_image_mount();
         break;
     case FUJICMD_OPEN_DIRECTORY:
-        sio_ack();
+        sio_late_ack();
         sio_open_directory();
         break;
     case FUJICMD_READ_DIR_ENTRY:
@@ -2574,7 +2533,7 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_read_host_slots();
         break;
     case FUJICMD_WRITE_HOST_SLOTS:
-        sio_ack();
+        sio_late_ack();
         sio_write_host_slots();
         break;
     case FUJICMD_READ_DEVICE_SLOTS:
@@ -2582,7 +2541,7 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_read_device_slots();
         break;
     case FUJICMD_WRITE_DEVICE_SLOTS:
-        sio_ack();
+        sio_late_ack();
         sio_write_device_slots();
         break;
     case FUJICMD_GET_WIFI_ENABLED:
@@ -2598,7 +2557,7 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_get_adapter_config();
         break;
     case FUJICMD_NEW_DISK:
-        sio_ack();
+        sio_late_ack();
         sio_new_disk();
         break;
     case FUJICMD_UNMOUNT_HOST:
@@ -2606,11 +2565,11 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_unmount_host();
         break;
     case FUJICMD_SET_DEVICE_FULLPATH:
-        sio_ack();
+        sio_late_ack();
         sio_set_device_filename();
         break;
     case FUJICMD_SET_HOST_PREFIX:
-        sio_ack();
+        sio_late_ack();
         sio_set_host_prefix();
         break;
     case FUJICMD_GET_HOST_PREFIX:
@@ -2622,7 +2581,7 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_set_sio_external_clock();
         break;
     case FUJICMD_WRITE_APPKEY:
-        sio_ack();
+        sio_late_ack();
         sio_write_app_key();
         break;
     case FUJICMD_READ_APPKEY:
@@ -2630,7 +2589,7 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_read_app_key();
         break;
     case FUJICMD_OPEN_APPKEY:
-        sio_ack();
+        sio_late_ack();
         sio_open_app_key();
         break;
     case FUJICMD_CLOSE_APPKEY:
@@ -2646,7 +2605,7 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_set_boot_config();
         break;
     case FUJICMD_COPY_FILE:
-        sio_ack();
+        sio_late_ack();
         sio_copy_file();
         break;
     case FUJICMD_MOUNT_ALL:
@@ -2658,11 +2617,11 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_set_boot_mode();
         break;
     case FUJICMD_ENABLE_UDPSTREAM:
-        sio_ack();
+        sio_late_ack();
         sio_enable_udpstream();
         break;
     case FUJICMD_BASE64_ENCODE_INPUT:
-        sio_ack();
+        sio_late_ack();
         sio_base64_encode_input();
         break;
     case FUJICMD_BASE64_ENCODE_COMPUTE:
@@ -2678,7 +2637,7 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_base64_encode_output();
         break;
     case FUJICMD_BASE64_DECODE_INPUT:
-        sio_ack();
+        sio_late_ack();
         sio_base64_decode_input();
         break;
     case FUJICMD_BASE64_DECODE_COMPUTE:
@@ -2694,7 +2653,7 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_base64_decode_output();
         break;
     case FUJICMD_HASH_INPUT:
-        sio_ack();
+        sio_late_ack();
         sio_hash_input();
         break;
     case FUJICMD_HASH_COMPUTE:

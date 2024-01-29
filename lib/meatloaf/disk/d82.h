@@ -1,4 +1,5 @@
 // .D82 - This is a sector-for-sector copy of an 8250 floppy disk
+//
 // https://vice-emu.sourceforge.io/vice_17.html#SEC363
 // https://ist.uwaterloo.ca/~schepers/formats/D80-D82.TXT
 //
@@ -71,7 +72,7 @@ public:
         sectorsPerTrack = { 23, 25, 27, 29 };
     };
 
-	virtual uint8_t speedZone( uint8_t track) override
+	virtual uint8_t speedZone(uint8_t track) override
 	{
         if (track < 78)
             return (track < 40) + (track < 54) + (track < 65);
@@ -94,7 +95,12 @@ class D82File: public D64File {
 public:
     D82File(std::string path, bool is_dir = true) : D64File(path, is_dir) {};
 
-    MStream* createIStream(std::shared_ptr<MStream> containerIstream) override;
+    MStream* getDecodedStream(std::shared_ptr<MStream> containerIstream) override
+    {
+        Debug_printv("[%s]", url.c_str());
+
+        return new D82IStream(containerIstream);
+    }
 };
 
 
@@ -110,7 +116,7 @@ public:
         return new D82File(path);
     }
 
-    bool handles(std::string fileName) {
+    bool handles(std::string fileName) override {
         return byExtension(".d82", fileName);
     }
 

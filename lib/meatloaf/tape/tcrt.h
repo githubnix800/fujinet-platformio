@@ -8,18 +8,18 @@
 #define MEATLOAF_MEDIA_TCRT
 
 #include "meat_io.h"
-#include "cbm_media.h"
+#include "meat_media.h"
 
 
 /********************************************************
  * Streams
  ********************************************************/
 
-class TCRTIStream : public CBMImageStream {
+class TCRTIStream : public MImageStream {
     // override everything that requires overriding here
 
 public:
-    TCRTIStream(std::shared_ptr<MStream> is) : CBMImageStream(is) {};
+    TCRTIStream(std::shared_ptr<MStream> is) : MImageStream(is) {};
 
 protected:
     struct Header {
@@ -29,9 +29,9 @@ protected:
     struct Entry {
         char filename[16];
         uint8_t file_type;
-        uint16_t data_offset;
+        uint8_t file_start_address[2]; // from tcrt file system at 0xD8
         uint8_t file_size[3];
-        uint16_t load_address;
+        uint8_t file_load_address[2];
         uint16_t bundle_compatibility;
         uint16_t bundle_main_start;
         uint16_t bundle_main_length;
@@ -39,7 +39,6 @@ protected:
     };
 
     void seekHeader() override {
-        Debug_printv("here");
         containerStream->seek(0x18);
         containerStream->read((uint8_t*)&header, sizeof(header));
     }
@@ -49,13 +48,15 @@ protected:
     }
 
     bool seekEntry( std::string filename ) override;
-    bool seekEntry( size_t index ) override;
-
-    size_t readFile(uint8_t* buf, size_t size) override;
+    bool seekEntry( uint16_t index ) override;
     bool seekPath(std::string path) override;
+
+    uint16_t readFile(uint8_t* buf, uint16_t size) override;
 
     Header header;
     Entry entry;
+
+    std::string decodeType(uint8_t file_type, bool show_hidden = false) override;
 
 private:
     friend class TCRTFile;
@@ -73,20 +74,14 @@ public:
         isDir = is_dir;
 
         media_image = name;
-        mstr::toASCII(media_image);
+        isPETSCII = true;
     };
     
     ~TCRTFile() {
         // don't close the stream here! It will be used by shared ptr D64Util to keep reading image params
     }
 
-    MStream* createIStream(std::shared_ptr<MStream> containerIstream) override;
-
-    std::string petsciiName() override {
-        // It's already in PETSCII
-        mstr::replaceAll(name, "\\", "/");
-        return name;
-    }
+    MStream* getDecodedStream(std::shared_ptr<MStream> containerIstream) override;
 
     bool isDirectory() override;
     bool rewindDirectory() override;
@@ -95,7 +90,7 @@ public:
 
     bool exists() override { return true; };
     bool remove() override { return false; };
-    bool rename(std::string dest) { return false; };
+    bool rename(std::string dest) override { return false; };
     time_t getLastWrite() override { return 0; };
     time_t getCreationTime() override { return 0; };
     uint32_t size() override;
@@ -117,7 +112,7 @@ public:
         return new TCRTFile(path);
     }
 
-    bool handles(std::string fileName) {
+    bool handles(std::string fileName) override {
         return byExtension(".tcrt", fileName);
     }
 
