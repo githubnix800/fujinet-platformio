@@ -17,6 +17,7 @@
   #include "keys.h"
 #endif
 #include "led.h"
+#include "oled.h"
 #include "crypt.h"
 #include "../modem/modem.h"
 
