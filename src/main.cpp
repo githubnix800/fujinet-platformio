@@ -17,7 +17,6 @@
   #include "keys.h"
 #endif
 #include "led.h"
-#include "oled.h"
 #include "crypt.h"
 #include "../modem/modem.h"
 
@@ -37,6 +36,10 @@
 
 #ifdef BLUETOOTH_SUPPORT
 #include "fnBluetooth.h"
+#endif
+
+#ifdef OLED_I2C_SUPPORT || OLED_SPI_SUPPORT
+#include "oled.h"
 #endif
 
 // fnSystem is declared and defined in fnSystem.h/cpp
