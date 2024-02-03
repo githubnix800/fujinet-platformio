@@ -1,10 +1,9 @@
-/* FujiNet Hardware Pin Mapping */
-#ifdef PINMAP_LILIGOT7
+#ifdef PINMAP_YDESP32S3
 
 /* SD Card */
 #define PIN_CARD_DETECT         GPIO_NUM_12 // fnSystem.h
-#define PIN_CARD_DETECT_FIX     GPIO_NUM_12 // fnSystem.h
-#define PIN_SD_HOST_CS          GPIO_NUM_4  // fnFsSD.cpp
+#define PIN_CARD_DETECT_FIX     GPIO_NUM_15 // fnSystem.h
+#define PIN_SD_HOST_CS          GPIO_NUM_5  // fnFsSD.cpp
 #define PIN_SD_HOST_MISO        GPIO_NUM_19
 #define PIN_SD_HOST_MOSI        GPIO_NUM_23
 #define PIN_SD_HOST_SCK         GPIO_NUM_18
@@ -24,7 +23,7 @@
 
 /* LEDs */
 #define PIN_LED_WIFI            GPIO_NUM_2 // led.cpp
-#define PIN_LED_BUS             GPIO_NUM_5
+#define PIN_LED_BUS             GPIO_NUM_4
 #define PIN_LED_BT              GPIO_NUM_13
 
 /* Atari SIO Pins */
@@ -38,4 +37,4 @@
 /* Audio Output */
 #define PIN_DAC1                GPIO_NUM_25 // samlib.h
 
-#endif /* PINMAP_LILIGOT7 */
+#endif /* PINMAP_YDESP32S3 */
