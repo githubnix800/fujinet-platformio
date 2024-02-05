@@ -37,4 +37,8 @@
 /* Audio Output */
 #define PIN_DAC1                GPIO_NUM_25 // samlib.h
 
+/* Display I²C */
+#define PIN_SDA                 GPIO_NUM_08
+#define PIN_SCL                 GPIO_NUM_09
+
 #endif /* PINMAP_YDESP32S3 */
