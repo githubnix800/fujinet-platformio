@@ -1,9 +1,10 @@
-#ifdef PINMAP_YDESP32S3
+/* FujiNet Hardware Pin Mapping */
+#ifdef PINMAP_WROVERIE
 
 /* SD Card */
 #define PIN_CARD_DETECT         GPIO_NUM_12 // fnSystem.h
-#define PIN_CARD_DETECT_FIX     GPIO_NUM_15 // fnSystem.h
-#define PIN_SD_HOST_CS          GPIO_NUM_5  // fnFsSD.cpp
+#define PIN_CARD_DETECT_FIX     GPIO_NUM_12 // fnSystem.h
+#define PIN_SD_HOST_CS          GPIO_NUM_4  // fnFsSD.cpp
 #define PIN_SD_HOST_MISO        GPIO_NUM_19
 #define PIN_SD_HOST_MOSI        GPIO_NUM_23
 #define PIN_SD_HOST_SCK         GPIO_NUM_18
@@ -23,8 +24,15 @@
 
 /* LEDs */
 #define PIN_LED_WIFI            GPIO_NUM_2 // led.cpp
-#define PIN_LED_BUS             GPIO_NUM_4
+#define PIN_LED_BUS             GPIO_NUM_5
+
+// pins 12-15 are used to interface with the JTAG debugger
+// so leave them alone if we're using JTAG
+#if !defined(JTAG)
 #define PIN_LED_BT              GPIO_NUM_13
+#else
+#define PIN_LED_BT              GPIO_NUM_4
+#endif
 
 /* Atari SIO Pins */
 #define PIN_INT                 GPIO_NUM_26 // sio.h
@@ -37,8 +45,4 @@
 /* Audio Output */
 #define PIN_DAC1                GPIO_NUM_25 // samlib.h
 
-/* Display I²C */
-#define PIN_SDA                 GPIO_NUM_08
-#define PIN_SCL                 GPIO_NUM_09
-
-#endif /* PINMAP_YDESP32S3 */
+#endif /* PINMAP_WROVERIE */

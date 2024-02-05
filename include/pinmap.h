@@ -22,7 +22,7 @@
 #include "pinmap/heathkit_h89.h"
 
 #include "pinmap/lolind32pro.h"
-#include "pinmap/ydesp32s3.h"
+#include "pinmap/fujinet-esp32-wrover-ie-8mb.h"
 
 #endif /* ESP_PLATFORM */
 #endif /* PINMAP_H */
