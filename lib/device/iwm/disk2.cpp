@@ -1,5 +1,5 @@
 #ifdef BUILD_APPLE
-#ifndef SP_OVER_SLIP
+#ifndef DEV_RELAY_SLIP
 
 #include "disk2.h"
 
@@ -42,15 +42,9 @@ void iwmDisk2::init()
   device_active = false;
 }
 
-#ifdef ESP_PLATFORM
-mediatype_t iwmDisk2::mount(FILE *f, uint32_t disksize, mediatype_t disk_type)//, const char *filename), uint32_t disksize, mediatype_t disk_type)
-#else
-mediatype_t iwmDisk2::mount(FileHandler *f, uint32_t disksize, mediatype_t disk_type)//, const char *filename), uint32_t disksize, mediatype_t disk_type)
-#endif
+mediatype_t iwmDisk2::mount_file(fnFile *f, uint32_t disksize, mediatype_t disk_type)
 {
-
   mediatype_t mt = MEDIATYPE_UNKNOWN;
- // mediatype_t disk_type = MEDIATYPE_WOZ;
 
   // Debug_printf("disk MOUNT %s\n", filename);
 
@@ -61,7 +55,7 @@ mediatype_t iwmDisk2::mount(FileHandler *f, uint32_t disksize, mediatype_t disk_
     _disk = nullptr;
   }
 
-    switch (disk_type)
+  switch (disk_type)
     {
     case MEDIATYPE_WOZ:
         Debug_printf("\nMounting Media Type WOZ");
@@ -78,6 +72,8 @@ mediatype_t iwmDisk2::mount(FileHandler *f, uint32_t disksize, mediatype_t disk_
         mt = ((MediaTypeDSK *)_disk)->mount(f, disksize);
         break;
     default:
+        Debug_printf("\r\nUnsupported Media Type for DiskII");
+        mt = MEDIATYPE_UNKNOWN;
         break;
     }
 
@@ -96,11 +92,7 @@ void iwmDisk2::unmount()
 
 }
 
-#ifdef ESP_PLATFORM
-bool iwmDisk2::write_blank(FILE *f, uint16_t sectorSize, uint16_t numSectors)
-#else
-bool iwmDisk2::write_blank(FileHandler *f, uint16_t sectorSize, uint16_t numSectors)
-#endif
+bool iwmDisk2::write_blank(fnFile *f, uint16_t sectorSize, uint16_t numSectors)
 {
   return false;
 }
@@ -147,17 +139,19 @@ void IRAM_ATTR iwmDisk2::change_track(int indicator)
   if ((((MediaTypeWOZ *)_disk)->trackmap(old_pos) == ((MediaTypeWOZ *)_disk)->trackmap(track_pos)) && indicator)
     return;
 
-#ifndef SP_OVER_SLIP
+#ifndef DEV_RELAY_SLIP
   // need to tell diskii_xface the number of bits in the track
   // and where the track data is located so it can convert it
   if (((MediaTypeWOZ *)_disk)->trackmap(track_pos) != 255)
   {
+    TRK_bitstream *bitstream = ((MediaTypeWOZ *)_disk)->get_track(track_pos);
     diskii_xface.copy_track(
-        ((MediaTypeWOZ *)_disk)->get_track(track_pos),
-        ((MediaTypeWOZ *)_disk)->track_len(track_pos),
-        ((MediaTypeWOZ *)_disk)->num_bits(track_pos),
+        bitstream->data,
+        bitstream->len_bytes,
+        bitstream->len_bits,
         NS_PER_BIT_TIME * ((MediaTypeWOZ *)_disk)->optimal_bit_timing);
-    Debug_printf("\nCopy track: %d", track_pos);
+    // This printf nudges timing too much.
+    // Debug_printf("\nCopy track: %d", track_pos);
   }
   else
     diskii_xface.copy_track(
@@ -167,6 +161,11 @@ void IRAM_ATTR iwmDisk2::change_track(int indicator)
         NS_PER_BIT_TIME * ((MediaTypeWOZ *)_disk)->optimal_bit_timing);
 #endif // !SLIP
   // Since the empty track has no data, and therefore no length, using a fake length of 51,200 bits (6400 bytes) works very well.
+}
+
+bool iwmDisk2::write_sector(int track, int sector, uint8_t* buffer)
+{
+  return _disk->write_sector(track, sector, buffer);
 }
 
 #endif /* !SLIP */

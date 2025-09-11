@@ -27,11 +27,24 @@
 #include "fsFlash.h"
 #include "fnFsSD.h"
 
+#include "fnLedStrip.h"
+
 #include "httpService.h"
+
+#ifdef ENABLE_CONSOLE
+#include "../lib/console/ESP32Console.h"
+using namespace ESP32Console;
+Console console;
+#endif
+
+#ifdef ENABLE_DISPLAY
+#include "display.h"
+#endif
 
 #ifndef ESP_PLATFORM
 #include "fnTaskManager.h"
 #include "version.h"
+#include "build_version.h"
 #endif
 
 #ifdef BLUETOOTH_SUPPORT
@@ -51,8 +64,8 @@
 
 void print_version()
 {
-    printf("FujiNet-PC " FN_VERSION_FULL "\n");
-    printf("Version date: " FN_VERSION_DATE "\n");
+    printf("FujiNet-PC " FN_VERSION_FULL_GIT "\n");
+    printf("Version date: " FN_BUILD_GIT_DATE "\n");
 
     printf("Build: ");
 #if defined(_WIN32)
@@ -66,44 +79,21 @@ void print_version()
 #endif
     printf("\n");
 
-    printf("Target: ");
-#if defined(BUILD_ATARI)
-    printf("ATARI");
-#elif defined(BUILD_ADAM)
-    printf("ADAM");
-#elif defined(BUILD_APPLE)
-    printf("APPLE");
-#elif defined(BUILD_MAC)
-    printf("MAC");
-#elif defined(BUILD_IEC)
-    printf("IEC");
-#elif defined(BUILD_LYNX)
-    printf("LYNX");
-#elif defined(BUILD_S100)
-    printf("S100");
-#elif defined(BUILD_RS232)
-    printf("RS232");
-#elif defined(BUILD_CX16)
-    printf("CX16");
-#elif defined(BUILD_RC2014)
-    printf("RC2014");
-#elif defined(BUILD_H89)
-    printf("H89");
-#elif defined(BUILD_COCO)
-    printf("COCO");
-#else
-    printf("unknown");
-#endif
-    printf("\n");
+    printf("Target: %s\n", fnSystem.get_target_platform_str());
 }
 
-volatile sig_atomic_t fn_shutdown = 0;
+volatile int exit_for_restart = 0;
 
 void sighandler(int signum)
 {
-    fn_shutdown = 1 + fn_shutdown;
-    if (fn_shutdown >= 3)
-        _exit(EXIT_FAILURE); // emergency exit
+#if !defined(_WIN32)
+    if (signum == SIGHUP)
+        exit_for_restart = 1;       // graceful shutdown (with restart by run-fujinet script)
+    if (signum == SIGUSR1)
+        _exit(EXIT_AND_RESTART);    // forced exit (with restart by run-fujinet script)
+#endif
+    if (fnSystem.request_for_shutdown() >= 3)
+        _exit(EXIT_FAILURE);        // emergency exit after any 3 signals
 }
 
 #endif // !ESP_PLATFORM
@@ -150,11 +140,22 @@ void main_setup(int argc, char *argv[])
 
     // Startup messages
 #ifdef ESP_PLATFORM
-  #ifdef DEBUG
-    fnUartDebug.begin(DEBUG_SPEED);
+
     unsigned long startms = fnSystem.millis();
+
+#ifdef ENABLE_CONSOLE
+    //You can change the console prompt before calling begin(). By default it is "ESP32>"
+    console.setPrompt("fujinet[%pwd%]# ");
+
+    //You can change the baud rate and pin numbers similar to Serial.begin() here.
+    console.begin(DEBUG_SPEED);
+#else
+    Serial.begin(DEBUG_SPEED);
+#endif
+
+#ifdef DEBUG
     Debug_printf("\r\n\r\n--~--~--~--\nFujiNet %s Started @ %lu\r\n", fnSystem.get_fujinet_version(), startms);
-    Debug_printf("Starting heap: %u\r\n", fnSystem.get_free_heap_size());
+    Debug_printf("Starting heap: %lu\r\n", fnSystem.get_free_heap_size());
     Debug_printv("Heap: %lu\r\n",esp_get_free_internal_heap_size());
     #ifdef ATARI
     Debug_printf("PsramSize %u\r\n", fnSystem.get_psram_size());
@@ -194,13 +195,16 @@ void main_setup(int argc, char *argv[])
     signal(SIGTERM, sighandler);
   #if defined(_WIN32)
     signal(SIGBREAK, sighandler);
+  #else
+    signal(SIGHUP, sighandler);
+    signal(SIGUSR1, sighandler);
   #endif
 
   #if defined(_WIN32)
     // Initialize Winsock
     WSADATA wsaData;
     int result = WSAStartup(MAKEWORD(2,2), &wsaData);
-    if (result != 0) 
+    if (result != 0)
     {
         Debug_printf("WSAStartup failed: %d\n", result);
         exit(EXIT_FAILURE);
@@ -213,6 +217,7 @@ void main_setup(int argc, char *argv[])
 
 #ifdef ESP_PLATFORM
     fnKeyManager.setup();
+    fnLedStrip.setup();
 #endif
     fnLedManager.setup();
 
@@ -236,14 +241,23 @@ void main_setup(int argc, char *argv[])
     SIO.addDevice(&theFuji, SIO_DEVICEID_FUJINET); // the FUJINET!
 
     if (Config.get_apetime_enabled() == true)
-        SIO.addDevice(&apeTime, SIO_DEVICEID_APETIME); // APETime
+        SIO.addDevice(&clockDevice, SIO_DEVICEID_APETIME); // Clock for Atari, APETime compatible, but extended for additional return types
 
 #ifdef ESP_PLATFORM
     SIO.addDevice(&udpDev, SIO_DEVICEID_MIDI); // UDP/MIDI device
-#else
-    pcLink.mount(1, Config.get_general_SD_path().c_str()); // mount SD as PCL1:
-    SIO.addDevice(&pcLink, SIO_DEVICEID_PCLINK); // PCLink
 #endif
+
+    // add PCLink device only if we have SD card
+    if (fnSDFAT.running())
+    {
+#ifdef ESP_PLATFORM
+        // TODO how to get the folder SD is mounted on?
+        pcLink.mount(1, "/sd"); // mount SD card as PCL1:
+#else
+        pcLink.mount(1, Config.get_general_SD_path().c_str()); // mount SD as PCL1:
+#endif
+        SIO.addDevice(&pcLink, SIO_DEVICEID_PCLINK); // PCLink
+    }
 
     // Create a new printer object, setting its output depending on whether we have SD or not
     FileSystem *ptrfs = fnSDFAT.running() ? (FileSystem *)&fnSDFAT : (FileSystem *)&fsFlash;
@@ -260,16 +274,14 @@ void main_setup(int argc, char *argv[])
 
     sioR = new modem(ptrfs, Config.get_modem_sniffer_enabled()); // Config/User selected sniffer enable
 #ifdef ESP_PLATFORM
-    sioR->set_uart(&fnUartBUS);
+    SYSTEM_BUS.set_uart(&fnUartBUS);
 #else
-    sioR->set_uart(&fnSioCom);
+    SYSTEM_BUS.set_uart(&fnSioCom);
 #endif
 
     SIO.addDevice(sioR, SIO_DEVICEID_RS232); // R:
 
-#ifdef ESP_PLATFORM
     SIO.addDevice(&sioV, SIO_DEVICEID_FN_VOICE); // P3:
-#endif
 
     SIO.addDevice(&sioZ, SIO_DEVICEID_CPM); // (ATR8000 CPM)
 
@@ -313,6 +325,21 @@ void main_setup(int argc, char *argv[])
     theFuji.setup(&RS232);
     RS232.setup();
     RS232.addDevice(&theFuji,0x70);
+    if (Config.get_apetime_enabled() == true)
+        RS232.addDevice(&apeTime, RS232_DEVICEID_APETIME); // Clock for Atari, APETime compatible, but extended for additional return types
+
+    // Create a new printer object, setting its output depending on whether we have SD or not
+    FileSystem *ptrfs = fnSDFAT.running() ? (FileSystem *)&fnSDFAT : (FileSystem *)&fsFlash;
+    rs232Printer::printer_type ptype = Config.get_printer_type(0);
+    if (ptype == rs232Printer::printer_type::PRINTER_INVALID)
+        ptype = rs232Printer::printer_type::PRINTER_FILE_TRIM;
+
+    Debug_printf("Creating a default printer using %s storage and type %d\r\n", ptrfs->typestring(), ptype);
+
+    rs232Printer *ptr = new rs232Printer(ptrfs, ptype);
+    fnPrinters.set_entry(0, ptr, ptype, 0);
+
+    RS232.addDevice(ptr, RS232_DEVICEID_PRINTER); // P:
 #endif
 
 #ifdef BUILD_RC2014
@@ -443,9 +470,31 @@ void main_setup(int argc, char *argv[])
 #ifdef ESP_PLATFORM
   #ifdef DEBUG
     unsigned long endms = fnSystem.millis();
-    Debug_printf("Available heap: %u\nSetup complete @ %lu (%lums)\r\n", fnSystem.get_free_heap_size(), endms, endms - startms);
+    Debug_printf("\r\nAvailable heap: %lu\r\nSetup complete @ %lu (%lums)\r\n", fnSystem.get_free_heap_size(), endms, endms - startms);
+    Debug_printv("Low Heap: %lu",esp_get_free_internal_heap_size());
   #endif // DEBUG
-    Debug_printv("Low Heap: %lu\n",esp_get_free_internal_heap_size());
+
+#ifdef ENABLE_DISPLAY
+    DISPLAY.start();
+#endif
+
+#ifdef ENABLE_CONSOLE
+    //Register builtin commands like 'reboot', 'version', or 'meminfo'
+    console.registerSystemCommands();
+
+    //Register network commands
+    console.registerNetworkCommands();
+
+    //Register the VFS specific commands
+    console.registerVFSCommands();
+
+    //Register GPIO commands
+    console.registerGPIOCommands();
+
+    //Register XFER commands
+    console.registerXFERCommands();
+#endif
+
 #else
 // !ESP_PLATFORM
     unsigned long endms = fnSystem.millis();
@@ -465,6 +514,10 @@ void fn_service_loop(void *param)
 {
 #ifdef ESP_PLATFORM
     main_setup();
+#else
+    if (fnSystem.check_for_shutdown()) {
+      return; // get out, shutdown already requested
+    }
 #endif
 
     // Now that our main service is running, try connecting to WiFi or BlueTooth
@@ -490,7 +543,7 @@ void fn_service_loop(void *param)
     // Shouldn't be a problem, but something to keep in mind...
     while (true)
 #else
-    while (!fn_shutdown)
+    while (fnSystem.check_for_shutdown() == 0)
 #endif
     {
 
@@ -503,7 +556,7 @@ void fn_service_loop(void *param)
 
 #ifdef LEAK_DEBUG
   #ifdef ESP_PLATFORM
-        Debug_printv("Low Heap: %lu\r\n",esp_get_free_internal_heap_size());
+        Debug_printv("Low Heap: %lu",esp_get_free_internal_heap_size());
   #endif
 #endif
         SYSTEM_BUS.service();
@@ -546,7 +599,7 @@ extern "C"
 // This is assigned to CPU1; the WiFi task ends up on CPU0
 #define MAIN_STACKSIZE 32768
 #ifdef BUILD_ADAM
-#define MAIN_PRIORITY 30
+#define MAIN_PRIORITY 17
 #else
 #define MAIN_PRIORITY 17
 #endif
@@ -569,6 +622,9 @@ int main(int argc, char *argv[])
     main_setup(argc, argv);
     // Enter service loop
     fn_service_loop(nullptr);
+
+    if (exit_for_restart)
+        fnSystem.reboot(); // calls exit(75)
     return EXIT_SUCCESS;
 }
 

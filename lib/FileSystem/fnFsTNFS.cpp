@@ -1,7 +1,9 @@
 #include "fnFsTNFS.h"
+#include "fnFileLocal.h"
 
 #include <sys/stat.h>
 #include <errno.h>
+#include <libgen.h>
 
 #ifdef ESP_PLATFORM
 #include "fnFsTNFSvfs.h"
@@ -29,6 +31,13 @@ FileSystemTNFS::~FileSystemTNFS()
 #ifdef ESP_PLATFORM
     if(_basepath[0] != '\0')
     vfs_tnfs_unregister(_basepath);
+
+    if (keepAliveTimerHandle != nullptr)
+    {
+        esp_timer_stop(keepAliveTimerHandle);
+        esp_timer_delete(keepAliveTimerHandle);
+        keepAliveTimerHandle = nullptr;
+    }
 #endif
 }
 
@@ -37,16 +46,35 @@ bool FileSystemTNFS::start(const char *host, uint16_t port, const char * mountpa
     if (_started)
         return false;
 
-    if(host == nullptr || host[0] == '\0')
+    if(host == nullptr)
         return false;
 
-    strlcpy(_mountinfo.hostname, host, sizeof(_mountinfo.hostname));
+    const char *host_no_prefix;
+    if (strncmp("_tcp.", host, 5) == 0)
+    {
+        host_no_prefix = &host[5];
+        _mountinfo.protocol = TNFS_PROTOCOL_TCP;
+    }
+    else if (strncmp("_udp.", host, 5) == 0)
+    {
+        host_no_prefix = &host[5];
+        _mountinfo.protocol = TNFS_PROTOCOL_UDP;
+    }
+    else
+    {
+        host_no_prefix = host;
+    }
+    if (host_no_prefix[0] == '\0')
+    {
+            return false;
+    }
+    strlcpy(_mountinfo.hostname, host_no_prefix, sizeof(_mountinfo.hostname));
 
     // Try to resolve the hostname and store that so we don't have to keep looking it up
-    _mountinfo.host_ip = get_ip4_addr_by_name(host);
+    _mountinfo.host_ip = get_ip4_addr_by_name(_mountinfo.hostname);
     if(_mountinfo.host_ip == IPADDR_NONE)
     {
-        Debug_printf("Failed to resolve hostname \"%s\"\r\n", host);
+        Debug_printf("Failed to resolve hostname \"%s\"\r\n", _mountinfo.hostname);
         return false;
     }
     // TODO: Refresh the DNS name we resolved after X amount of time
@@ -89,6 +117,17 @@ bool FileSystemTNFS::start(const char *host, uint16_t port, const char * mountpa
         Debug_println("Failed to register VFS driver!");
         return false;
     }
+
+    esp_timer_create_args_t tcfg = {
+        .callback = keepAliveTNFS,
+        .arg = this,
+        .dispatch_method = esp_timer_dispatch_t::ESP_TIMER_TASK,
+        .name = "tnfs_keep_alive",
+        .skip_unhandled_events = true,
+    };
+    esp_timer_create(&tcfg, &keepAliveTimerHandle);
+    // Send a keep-alive message every 60s.
+    esp_timer_start_periodic(keepAliveTimerHandle, 60 * 1000000);
 #endif
 
     _started = true;
@@ -160,9 +199,13 @@ bool FileSystemTNFS::is_dir(const char *path)
 #endif
 }
 
-#ifndef ESP_PLATFORM
+#ifndef FNIO_IS_STDIO
 FileHandler * FileSystemTNFS::filehandler_open(const char* path, const char* mode)
 {
+#ifdef ESP_PLATFORM
+    FILE * fh = file_open(path, mode);
+    return (fh == nullptr) ? nullptr : new FileHandlerLocal(fh);
+#else
     if(!_started || path == nullptr)
         return nullptr;
 
@@ -211,6 +254,7 @@ FileHandler * FileSystemTNFS::filehandler_open(const char* path, const char* mod
     }
     errno = 0;
     return new FileHandlerTNFS(&_mountinfo, handle);
+#endif
 }
 #endif
 
@@ -221,13 +265,35 @@ bool FileSystemTNFS::dir_open(const char * path, const char *pattern, uint16_t d
 
     uint8_t d_opt = 0;
     uint8_t s_opt = 0;
+    char realpat[TNFS_MAX_FILELEN];
+    char *thepat = 0;
 
+    if (!!pattern) {
+        thepat = realpat;
+        if (pattern[0] == '!')
+        {
+            snprintf(realpat, sizeof(realpat), "**/%s*", pattern+1);
+            d_opt |= TNFS_DIROPT_NO_FOLDERS;
+            d_opt |= TNFS_DIROPT_TRAVERSE;
+        }
+        else
+        {
+            strlcpy (realpat, pattern, sizeof (realpat));
+            if (realpat[strlen(realpat)-1] == '/') {
+                Debug_print (
+                    "FileSystemTNFS::dir_open applying pattern to directories\n"
+                );
+                realpat[strlen(realpat)-1] = '\0';
+                d_opt |= TNFS_DIROPT_DIR_PATTERN;
+            }
+        }
+    }
     if(diropts & DIR_OPTION_DESCENDING)
         s_opt |= TNFS_DIRSORT_DESCENDING;
     if(diropts & DIR_OPTION_FILEDATE)
         s_opt |= TNFS_DIRSORT_MODIFIED;
 
-    if(TNFS_RESULT_SUCCESS == tnfs_opendirx(&_mountinfo, path, s_opt, d_opt, pattern, 0))
+    if(TNFS_RESULT_SUCCESS == tnfs_opendirx(&_mountinfo, path, s_opt, d_opt, thepat, 0))
     {
         // Save the directory for later use, making sure it starts and ends with '/''
         if(path[0] != '/')
@@ -297,3 +363,14 @@ bool FileSystemTNFS::dir_seek(uint16_t position)
 
     return 0 == tnfs_seekdir(&_mountinfo, position);
 }
+
+#ifdef ESP_PLATFORM
+void keepAliveTNFS(void *info)
+{
+#ifdef VERBOSE_TNFS
+    Debug_println("Sending keep-alive command");
+#endif
+    FileSystemTNFS *parent = (FileSystemTNFS *)info;
+    parent->exists("keep-alive");
+}
+#endif

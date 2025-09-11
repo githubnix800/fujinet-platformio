@@ -1,8 +1,7 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
-#include <driver/timer.h>
-
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -131,7 +130,10 @@ public:
      * @param comanddata incoming 4 bytes containing command and aux bytes
      * @param checksum 8 bit checksum
      */
-    virtual void rs232_process(uint32_t commanddata, uint8_t checksum);
+    virtual void rs232_process(cmdFrame_t *cmd_ptr);
+
+    void rs232_seek();
+    void rs232_tell();
 
 private:
     /**
@@ -157,7 +159,7 @@ private:
     /**
      * The PeoplesUrlParser object used to hold/process a URL
      */
-    PeoplesUrlParser *urlParser = nullptr;
+    std::unique_ptr<PeoplesUrlParser> urlParser = nullptr;
 
     /**
      * Instance of currently open network protocol
@@ -192,18 +194,18 @@ private:
     /**
      * The AUX1 value used for OPEN.
      */
-    uint8_t open_aux1;
+    uint8_t open_aux1 = 0;
 
     /**
      * The AUX2 value used for OPEN.
      */
-    uint8_t open_aux2;
+    uint8_t open_aux2 = 0;
 
     /**
      * The Translation mode ORed into AUX2 for READ/WRITE/STATUS operations.
      * 0 = No Translation, 1 = CR<->EOL (Macintosh), 2 = LF<->EOL (UNIX), 3 = CR/LF<->EOL (PC/Windows)
      */
-    uint8_t trans_aux2;
+    uint8_t trans_aux2 = 0;
 
     /**
      * Return value for DSTATS inquiry
@@ -253,7 +255,7 @@ private:
     /**
      * Bytes sent of current JSON query object.
      */
-    unsigned short json_bytes_remaining=0;
+    unsigned short json_bytes_remaining = 0;
 
     /**
      * Instantiate protocol object

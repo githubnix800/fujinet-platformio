@@ -8,6 +8,7 @@
 
 #include "../network-protocol/status_error_codes.h"
 
+#include <vector>
 
 #define RXBUF_SIZE 65535
 
@@ -36,6 +37,14 @@ bool NetworkProtocolSSH::open(PeoplesUrlParser *urlParser, cmdFrame_t *cmdFrame)
 {
     NetworkProtocol::open(urlParser, cmdFrame);
     int ret;
+
+    if (!urlParser->user.empty()) {
+        login = &urlParser->user;
+    }
+
+    if (!urlParser->password.empty()) {
+        password = &urlParser->password;
+    }
 
     if (!login || !password || (login->empty() && password->empty()))
     {

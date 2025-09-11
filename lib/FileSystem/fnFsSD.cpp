@@ -1,7 +1,10 @@
 /* TODO: Check why using the SD/FAT routines takes up a large amount of the stack (around 4.5K)
 */
 
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+
 #include "fnFsSD.h"
+#include "fnFileLocal.h"
 
 #ifdef ESP_PLATFORM
 #include <esp_vfs.h>
@@ -9,8 +12,6 @@
 #include <driver/sdmmc_host.h>
 #include <esp_rom_gpio.h>
 #include <soc/sdmmc_periph.h>
-#else
-#include "fnFileLocal.h"
 #endif
 
 #include <sys/stat.h>
@@ -111,7 +112,6 @@ time_t _fssd_fatdatetime_to_epoch(WORD ftime, WORD fdate)
 
     tmtime.tm_isdst = 0;
 
-    #ifdef DEBUG
     /*
         Debug_printf("FileSystemSDFAT direntry: \"%s\"\r\n", _direntry.filename);
         Debug_printf("FileSystemSDFAT date (0x%04x): yr=%d, mn=%d, da=%d; time (0x%04x) hr=%d, mi=%d, se=%d\r\n", 
@@ -120,7 +120,6 @@ time_t _fssd_fatdatetime_to_epoch(WORD ftime, WORD fdate)
             finfo.ftime,
             tmtime.tm_hour, tmtime.tm_min, tmtime.tm_sec);
     */
-    #endif
 
     return mktime(&tmtime);
 }
@@ -188,7 +187,22 @@ bool FileSystemSDFAT::dir_open(const char * path, const char * pattern, uint16_t
         return false;
 #endif
 
+	char realpat[MAX_PATHLEN];
+	char *thepat = nullptr;
     bool have_pattern = pattern != nullptr && pattern[0] != '\0';
+	Debug_printf (
+		"FileSystemSDFAT::dir_open I%s have a pattern.\n",
+		have_pattern ? "" : " do not"
+	);
+	bool filter_dirs = have_pattern && pattern[strlen(pattern)-1] == '/';
+	if (filter_dirs) {
+		Debug_printf ("FileSystemSDFAT::dir_open I am filtering directories.\n");
+		strlcpy (realpat, pattern, sizeof (realpat));
+		realpat[strlen(realpat)-1] = '\0';
+	}
+	thepat = filter_dirs ? realpat : (char *)pattern;
+
+	
 
     // Read all the directory entries and store them
     // We temporarily keep separate lists of files and directories so we can sort them separately
@@ -220,6 +234,10 @@ bool FileSystemSDFAT::dir_open(const char * path, const char * pattern, uint16_t
         // Determine which list to put this in
         if(finfo.fattrib & AM_DIR)
         {
+			// Skip this entry if we're filtering directories and it doesn't match
+			if (filter_dirs && util_wildcard_match(finfo.fname, thepat) == false)
+				continue;
+
             store_directories.push_back(fsdir_entry());
             entry = &store_directories.back();
             entry->isDir = true;
@@ -227,7 +245,7 @@ bool FileSystemSDFAT::dir_open(const char * path, const char * pattern, uint16_t
         else
         {
             // Skip this entry if we have a search filter and it doesn't match it
-            if(have_pattern && util_wildcard_match(finfo.fname, pattern) == false)
+            if(have_pattern && util_wildcard_match(finfo.fname, thepat) == false)
                 continue;
 
             store_files.push_back(fsdir_entry());
@@ -261,6 +279,10 @@ bool FileSystemSDFAT::dir_open(const char * path, const char * pattern, uint16_t
         // Determine which list to put this in
         if(d->d_type == DT_DIR || d->d_type == DT_LNK) // well, assume symlinks points to directories only
         {
+			// Skip this entry if we're filtering directories and it doesn't match
+			if (filter_dirs && util_wildcard_match(d->d_name, thepat) == false)
+				continue;
+				
             store_directories.push_back(fsdir_entry());
             entry = &store_directories.back();
             entry->isDir = true;
@@ -268,7 +290,7 @@ bool FileSystemSDFAT::dir_open(const char * path, const char * pattern, uint16_t
         else
         {
             // Skip this entry if we have a search filter and it doesn't match it
-            if(have_pattern && util_wildcard_match(d->d_name, pattern) == false)
+            if(have_pattern && util_wildcard_match(d->d_name, thepat) == false)
                 continue;
 
             store_files.push_back(fsdir_entry());
@@ -365,14 +387,14 @@ FILE * FileSystemSDFAT::file_open(const char* path, const char* mode)
     FILE * result = fopen(fpath, mode);
     free(fpath);
     //Debug_printf("sdfileopen2: task hwm %u, %p\r\n", uxTaskGetStackHighWaterMark(NULL), pxTaskGetStackStart(NULL));
-    Debug_printf("fopen = %s : %s\r\n", path, result == nullptr ? "err" : "ok");
+    Debug_printf("fopen = %s %s : %s\r\n", path, mode, result == nullptr ? "err" : "ok");
     return result;
 }
 
-#ifndef ESP_PLATFORM
+#ifndef FNIO_IS_STDIO
 FileHandler * FileSystemSDFAT::filehandler_open(const char* path, const char* mode)
 {
-    Debug_printf("FileSystemSDFAT::filehandler_open %s %s\r\n", path, mode);
+    //Debug_printf("FileSystemSDFAT::filehandler_open %s %s\r\n", path, mode);
     FILE * fh = file_open(path, mode);
     return (fh == nullptr) ? nullptr : new FileHandlerLocal(fh);
 }
@@ -418,6 +440,17 @@ bool FileSystemSDFAT::remove(const char* path)
     free(fpath);
     return (0 == result);
 #endif
+}
+
+long FileSystemSDFAT::mtime(const char *path)
+{
+    char * fpath = _make_fullpath(path);
+    struct stat st;
+    int i = stat(fpath, &st);
+    long res = (0 == i) ? st.st_mtime : -1;
+    //Debug_printf("FileSystemSDFAT::mtime returned %ld on \"%s\" (\"%s\")\r\n", res, path, fpath);
+    free(fpath);
+    return res;
 }
 
 /* Checks that path exists and creates if it doesn't including any parent directories
@@ -467,7 +500,7 @@ bool FileSystemSDFAT::create_path(const char *path)
                is (end - fullpath) + 2
             */
             strlcpy(segment, fullpath, end - fullpath + (done ? 2 : 1));
-            Debug_printf("Checking/creating directory: \"%s\"\r\n", segment);
+            //Debug_printf("Checking/creating directory: \"%s\"\r\n", segment);
 #ifdef ESP_PLATFORM
             if ( !exists(segment) )
             {
@@ -668,9 +701,7 @@ bool FileSystemSDFAT::start()
     {
         _started = false;
         _card_capacity = 0;
-    #ifdef DEBUG
         Debug_printf("SD mount failed with code #%d, \"%s\"\r\n", e, esp_err_to_name(e));
-    #endif
     }
 
     return _started;

@@ -19,24 +19,31 @@
 #define HOST_SLOT_INVALID -1
 
 #ifdef ESP_PLATFORM
-
-#define HSIO_INVALID_INDEX -1
-
-#define CONFIG_FILENAME "/fnconfig.ini"
-
+#  define HSIO_INVALID_INDEX -1
+#  define CONFIG_FILENAME "/fnconfig.ini"
+// ESP_PLATFORM
 #else
+// !ESP_PLATFORM
+#  define HSIO_DISABLED_INDEX -1  // HSIO disabled, use standard speed only
+#  define CONFIG_FILENAME "fnconfig.ini"
+#  define SD_CARD_DIR "SD"
+#  define WEB_SERVER_LISTEN_URL "http://0.0.0.0:8000"
+#endif
 
-#define HSIO_DISABLED_INDEX -1  // HSIO disabled, use standard speed only
+// Bus Over IP default port
+#if defined(BUILD_ATARI)
+// NetSIO default port for Atari
+#  define CONFIG_DEFAULT_BOIP_PORT 9997
+#elif defined(BUILD_COCO)
+// DriveWire default port for CoCo
+#  define CONFIG_DEFAULT_BOIP_PORT 65504
+#else
+// Dev relay over network, used by Apple
+#  define CONFIG_DEFAULT_BOIP_PORT 1985
+#endif
 
-#define CONFIG_FILENAME "fnconfig.ini"
-
-#define SD_CARD_DIR "SD"
-
-#define WEB_SERVER_LISTEN_URL "http://0.0.0.0:8000"
-
-#define CONFIG_DEFAULT_NETSIO_PORT 9997
-#define CONFIG_DEFAULT_BOIP_PORT 1985
-
+#ifdef BUILD_RS232
+#define CONFIG_DEFAULT_RS232_BAUD 115200
 #endif
 
 #define CONFIG_FILEBUFFSIZE 2048
@@ -105,18 +112,22 @@ public:
     bool get_general_rotation_sounds() { return _general.rotation_sounds; };
     std::string get_network_udpstream_host() { return _network.udpstream_host; };
     int get_network_udpstream_port() { return _network.udpstream_port; };
+    bool get_network_udpstream_servermode() { return _network.udpstream_servermode; };
     bool get_general_config_enabled() { return _general.config_enabled; };
     void store_general_devicename(const char *devicename);
     void store_general_hsioindex(int hsio_index);
     void store_general_timezone(const char *timezone);
     void store_general_rotation_sounds(bool rotation_sounds);
     void store_general_config_enabled(bool config_enabled);
+    void store_general_config_ng(bool config_ng);
+    bool get_general_config_ng(){ return _general.config_ng; };
     std::string get_config_filename(){ return _general.config_filename; };
     void store_config_filename(const std::string &filename);
     bool get_general_boot_mode() { return _general.boot_mode; }
     void store_general_boot_mode(uint8_t boot_mode);
     void store_udpstream_host(const char host_ip[64]);
     void store_udpstream_port(int port);
+    void store_udpstream_servermode(bool mode);
     bool get_general_fnconfig_spifs() { return _general.fnconfig_spifs; };
     void store_general_fnconfig_spifs(bool fnconfig_spifs);
     bool get_general_status_wait_enabled() { return _general.status_wait_enabled; }
@@ -137,9 +148,11 @@ public:
 
     // SERIAL PORT
     std::string get_serial_port() { return _serial.port; };
+    int get_serial_baud() { return _serial.baud; };
     serial_command_pin get_serial_command() { return _serial.command; };
     serial_proceed_pin get_serial_proceed() { return _serial.proceed; };
     void store_serial_port(const char *port);
+    void store_serial_baud(int baud);
     void store_serial_command(serial_command_pin command_pin);
     void store_serial_proceed(serial_proceed_pin proceed_pin);
 #endif
@@ -149,7 +162,7 @@ public:
     std::string get_wifi_ssid() { return _wifi.ssid; };
     std::string get_wifi_passphrase() {
         if (_general.encrypt_passphrase) {
-            // crypt is a isomorphic operation, calling it when passphrase is encrypted will decrypt it.
+            // crypt is an isomorphic operation, calling it when passphrase is encrypted will decrypt it.
             std::string cleartext = crypto.crypt(_wifi.passphrase);
             // Debug_printf("Decrypting passphrase >%s< for ssid >%s< with key >%s<, cleartext: >%s<\r\n", _wifi.passphrase.c_str(), _wifi.ssid.c_str(), crypto.getkey().c_str(), cleartext.c_str());
             return cleartext;
@@ -250,23 +263,41 @@ public:
 
     bool get_apetime_enabled();
     void store_apetime_enabled(bool enabled);
-
-#ifndef ESP_PLATFORM
-    // NETSIO (Connection to Atari emulator)
-    bool get_netsio_enabled() { return _netsio.netsio_enabled; }
-    std::string get_netsio_host() { return _netsio.host; };
-    int get_netsio_port() { return _netsio.port; };
-    void store_netsio_enabled(bool enabled);
-    void store_netsio_host(const char *host);
-    void store_netsio_port(int port);
+    bool get_pclink_enabled();
+    void store_pclink_enabled(bool enabled);
 
     // BUS over IP
-    bool get_boip_enabled() { return _boip.boip_enabled; }
+    bool get_boip_enabled() { return _boip.boip_enabled; } // used by Atari and CoCo
     std::string get_boip_host() { return _boip.host; }
     int get_boip_port() { return _boip.port; }
     void store_boip_enabled(bool enabled);
     void store_boip_host(const char *host);
     void store_boip_port(int port);
+
+#ifdef BUILD_RS232
+    // RS232
+    int get_rs232_baud() { return _rs232.baud; }
+    void store_rs232_baud(int baud);
+#endif
+
+#ifndef ESP_PLATFORM
+    // BUS over Serial
+    bool get_bos_enabled() { return _bos.bos_enabled; } // unused
+    std::string get_bos_port_name() { return _bos.port_name; }
+    int get_bos_baud() { return _bos.baud; }
+    int get_bos_bits() { return _bos.bits; }
+    int get_bos_parity() { return _bos.parity; }
+    int get_bos_stop_bits() { return _bos.stop_bits; }
+    int get_bos_flowcontrol() { return _bos.flowcontrol; }
+
+    void store_bos_enabled(bool bos_enabled);
+    void store_bos_port_name(char *port_name);
+    void store_bos_baud(int baud);
+    void store_bos_bits(int bits);
+    void store_bos_parity(int parity);
+    void store_bos_stop_bits(int stop_bits);
+    void store_bos_flowcontrol(int flowcontrol);
+
 #endif
 
     void load();
@@ -295,11 +326,12 @@ private:
     void _read_section_phonebook(std::stringstream &ss, int index);
     void _read_section_cpm(std::stringstream &ss);
     void _read_section_device_enable(std::stringstream &ss);
+    void _read_section_boip(std::stringstream &ss);
 #ifndef ESP_PLATFORM
     void _read_section_serial(std::stringstream &ss);
-    void _read_section_netsio(std::stringstream &ss);
-    void _read_section_boip(std::stringstream &ss);
+    void _read_section_bos(std::stringstream &ss);
 #endif
+    void _read_section_rs232(std::stringstream &ss);
 
     enum section_match
     {
@@ -317,10 +349,13 @@ private:
         SECTION_PHONEBOOK,
         SECTION_CPM,
         SECTION_DEVICE_ENABLE,
+        SECTION_BOIP,
 #ifndef ESP_PLATFORM
         SECTION_SERIAL,
-        SECTION_NETSIO,
-        SECTION_BOIP,
+        SECTION_BOS,
+#endif
+#ifdef BUILD_RS232
+        SECTION_RS232,
 #endif
         SECTION_UNKNOWN
     };
@@ -405,6 +440,7 @@ private:
         char sntpserver [40];
         char udpstream_host [64];
         int udpstream_port;
+        bool udpstream_servermode;
     };
 
     struct general_info
@@ -418,6 +454,7 @@ private:
         std::string timezone;
         bool rotation_sounds = true;
         bool config_enabled = true;
+        bool config_ng = false;
         std::string config_filename;
         int boot_mode = 0;
         bool fnconfig_spifs = true;
@@ -435,26 +472,47 @@ private:
 #endif
     };
 
+    // "bus" over IP
+    struct boip_info
+    {
+        bool boip_enabled = false;
+#ifdef ESP_PLATFORM
+        // CoCo: DriveWire server (listen) -> listen on all IPs by default
+        // Atari: NetSIO hub (connect to)  -> hub host/IP must be specified
+        std::string host = "";
+#else
+        // On PC, limit connections to/from local machine by default
+        std::string host = "localhost";
+#endif
+        int port = CONFIG_DEFAULT_BOIP_PORT;
+    };
+
 #ifndef ESP_PLATFORM
     struct serial_info
     {
         std::string port;
-        serial_command_pin command = SERIAL_COMMAND_DSR;
-        serial_proceed_pin proceed = SERIAL_PROCEED_DTR;
+        int baud = 57600; // Used by CoCo, ignored by Atari
+        serial_command_pin command = SERIAL_COMMAND_DSR; // Used by Atari, ignored by CoCo
+        serial_proceed_pin proceed = SERIAL_PROCEED_DTR; // Used by Atari, ignored by CoCo
     };
 
-    struct netsio_info
+    // "bus" over serial
+    struct bos_info
     {
-        bool netsio_enabled = false;
-        std::string host = "";
-        int port = CONFIG_DEFAULT_NETSIO_PORT;
+        bool bos_enabled = false;
+        std::string port_name = "COM1";
+        int baud = 9600;
+        int bits = 8;
+        int parity = 0; // SP_PARITY_NONE
+        int stop_bits = 1;
+        int flowcontrol = 0; // SP_FLOWCONTROL_NONE
     };
+#endif
 
-    struct boip_info
+#ifdef BUILD_RS232
+    struct rs232_info
     {
-        bool boip_enabled = false;
-        std::string host = "";
-        int port = CONFIG_DEFAULT_BOIP_PORT;
+        int baud = 115200;
     };
 #endif
 
@@ -488,6 +546,7 @@ private:
         bool device_7_enabled = true;
         bool device_8_enabled = true;
         bool apetime = true;
+        bool pclink = true;
     };
 
     struct phbook_info
@@ -509,14 +568,17 @@ private:
     general_info _general;
     modem_info _modem;
     cassette_info _cassette;
+    boip_info _boip;
 #ifndef ESP_PLATFORM
     serial_info _serial;
-    netsio_info _netsio;
-    boip_info _boip;
+    bos_info _bos;
 #endif
     cpm_info _cpm;
     device_enable_info _denable;
     phbook_info _phonebook_slots[MAX_PB_SLOTS];
+#ifdef BUILD_RS232
+    rs232_info _rs232;
+#endif
 };
 
 extern fnConfig Config;

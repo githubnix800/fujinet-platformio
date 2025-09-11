@@ -3,6 +3,9 @@
 
 #include "fnFS.h"
 #include "tnfslib.h"
+#ifdef ESP_PLATFORM
+#include <esp_timer.h>
+#endif /* ESP_PLATFORM */
 
 class FileSystemTNFS : public FileSystem
 {
@@ -10,6 +13,7 @@ private:
     tnfsMountInfo _mountinfo;
 #ifdef ESP_PLATFORM
     unsigned long _last_dns_refresh  = 0;
+    esp_timer_handle_t keepAliveTimerHandle = nullptr;
 #else
     uint64_t _last_dns_refresh  = 0;
 #endif
@@ -25,7 +29,7 @@ public:
     const char * typestring() override { return type_to_string(FSTYPE_TNFS); };
 
     FILE * file_open(const char* path, const char* mode = FILE_READ) override;
-#ifndef ESP_PLATFORM
+#ifndef FNIO_IS_STDIO
     FileHandler * filehandler_open(const char* path, const char* mode = FILE_READ) override;
 #endif
 
@@ -48,5 +52,9 @@ public:
 };
 
 extern FileSystemTNFS fnTNFS;
+
+#ifdef ESP_PLATFORM
+void keepAliveTNFS(void *info);
+#endif
 
 #endif // _FN_FSTNFS_

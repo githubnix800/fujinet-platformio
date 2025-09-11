@@ -3,14 +3,10 @@
  */
 
 #ifndef ESP_PLATFORM
-
-#include "httpService.h"
-
 #include <sstream>
 #include <vector>
 #include <map>
-
-#include "../../include/debug.h"
+#include <algorithm>
 
 #include "fnSystem.h"
 #include "fnConfig.h"
@@ -20,10 +16,13 @@
 #include "printer.h"
 #include "fuji.h"
 
+#include "mongoose.h"
+#include "httpService.h"
 #include "httpServiceConfigurator.h"
 #include "httpServiceParser.h"
 #include "httpServiceBrowser.h"
 
+#include "../../include/debug.h"
 
 
 using namespace std;
@@ -150,7 +149,10 @@ void fnHttpService::send_file_parsed(struct mg_connection *c, const char *filena
         }
         else
         {
-            fread(buf, 1, sz, fInput);
+            size_t bytes_read = fread(buf, 1, sz - 1, fInput); // sz - 1 because we added 1 for null terminator
+            if (bytes_read < (sz - 1)) {
+                Debug_printf("Warning: Only read %u of %u bytes from file\n", (unsigned)bytes_read, (unsigned)(sz - 1));
+            }
             string contents(buf);
             free(buf);
             contents = fnHttpServiceParser::parse_contents(contents);
@@ -177,6 +179,8 @@ void fnHttpService::send_file_parsed(struct mg_connection *c, const char *filena
 */
 void fnHttpService::send_file(struct mg_connection *c, const char *filename)
 {
+    // Debug_printf("send_file '%s'\r\n", filename);
+
     // Build the full file path
     string fpath = FNWS_FILE_ROOT;
     // Trim any '/' prefix before adding it to the base directory
@@ -186,7 +190,10 @@ void fnHttpService::send_file(struct mg_connection *c, const char *filename)
 
     // Handle file differently if it's one of the types we parse
     if (fnHttpServiceParser::is_parsable(get_extension(filename)))
-        return send_file_parsed(c, fpath.c_str());
+    {
+        send_file_parsed(c, fpath.c_str());
+        return;
+    }
 
     // Retrieve server state
     serverstate *pState = &fnHTTPD.state; // ops TODO
@@ -211,7 +218,7 @@ void fnHttpService::send_file(struct mg_connection *c, const char *filename)
         do
         {
             count = fread((uint8_t *)buf, 1, FNWS_SEND_BUFF_SIZE, fInput);
-            mg_send(c, buf, count);
+            if (count > 0) mg_send(c, buf, count);
         } while (count > 0);
         free(buf);
         fclose(fInput);
@@ -234,77 +241,6 @@ int fnHttpService::redirect_or_result(mg_connection *c, mg_http_message *hm, int
     }
     return result;
 }
-
-// void fnHttpService::parse_query(httpd_req_t *req, queryparts *results)
-// {
-//     results->full_uri += req->uri;
-//     // See if we have any arguments
-//     int path_end = results->full_uri.find_first_of('?');
-//     if (path_end < 0)
-//     {
-//         results->path += results->full_uri;
-//         return;
-//     }
-//     results->path += results->full_uri.substr(0, path_end - 1);
-//     results->query += results->full_uri.substr(path_end + 1);
-//     // TO DO: parse arguments, but we've no need for them yet
-// }
-
-// esp_err_t fnHttpService::get_handler_index(httpd_req_t *req)
-// {
-//     Debug_printf("Index request handler %p\n", xTaskGetCurrentTaskHandle());
-
-//     send_file(req, "index.html");
-//     return ESP_OK;
-// }
-
-// esp_err_t fnHttpService::get_handler_test(httpd_req_t *req)
-// {
-//     TaskHandle_t task = xTaskGetCurrentTaskHandle();
-//     Debug_printf("Test request handler %p\n", task);
-
-//     //Debug_printf("WiFI handle %p\n", handle_WiFi);
-//     //vTaskPrioritySet(handle_WiFi, 5);
-
-//     // Send the file content out in chunks
-//     char testln[100];
-//     for (int i = 0; i < 2000; i++)
-//     {
-//         int z = sprintf(testln, "%04d %06lu %p 0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz<br/>\n",
-//                         i, fnSystem.millis() / 100, task);
-//         httpd_resp_send_chunk(req, testln, z);
-//     }
-//     httpd_resp_send_chunk(req, nullptr, 0);
-
-//     //vTaskPrioritySet(handle_WiFi, 23);
-
-//     Debug_println("Test completed");
-//     return ESP_OK;
-// }
-
-// esp_err_t fnHttpService::get_handler_file_in_query(httpd_req_t *req)
-// {
-//     //Debug_printf("File_in_query request handler '%s'\n", req->uri);
-
-//     // Get the file to send from the query
-//     queryparts qp;
-//     parse_query(req, &qp);
-//     send_file(req, qp.query.c_str());
-
-//     return ESP_OK;
-// }
-
-// esp_err_t fnHttpService::get_handler_file_in_path(httpd_req_t *req)
-// {
-//     //Debug_printf("File_in_path request handler '%s'\n", req->uri);
-
-//     // Get the file to send from the query
-//     queryparts qp;
-//     parse_query(req, &qp);
-//     send_file(req, qp.path.c_str());
-
-//     return ESP_OK;
-// }
 
 int fnHttpService::get_handler_print(struct mg_connection *c)
 {
@@ -413,53 +349,6 @@ int fnHttpService::get_handler_print(struct mg_connection *c)
     return 0; //ESP_OK;
 }
 
-// esp_err_t fnHttpService::get_handler_modem_sniffer(httpd_req_t *req)
-// {
-//     Debug_printf("Modem Sniffer output request handler\n");
-//     ModemSniffer *modemSniffer = sioR->get_modem_sniffer();
-//     Debug_printf("Got modem Sniffer.\n");
-//     time_t now = fnSystem.millis();
-
-//     if (now - sioR->get_last_activity_time() < PRINTER_BUSY_TIME) // re-using printer timeout constant.
-//     {
-//         return_http_error(req, fnwserr_post_fail);
-//         return ESP_FAIL;
-//     }
-
-//     set_file_content_type(req,"modem-sniffer.txt");
-
-//     FILE *sOutput = modemSniffer->closeOutputAndProvideReadHandle();
-//     Debug_printf("Got file handle %p\n",sOutput);
-//     if(sOutput == nullptr)
-//     {
-//         return_http_error(req, fnwserr_post_fail);
-//         return ESP_FAIL;
-//     }
-    
-//     // Finally, write the data
-//     // Send the file content out in chunks
-//     char *buf = (char *)malloc(FNWS_SEND_BUFF_SIZE);
-//     size_t count = 0, total = 0;
-//     do
-//     {
-//         count = fread((uint8_t *)buf, 1, FNWS_SEND_BUFF_SIZE, sOutput);
-//         // Debug_printf("fread %d, %d\n", count, errno);
-//         total += count;
-
-//         httpd_resp_send_chunk(req, buf, count);
-//     } while (count > 0);
-
-//     Debug_printf("Sent %u bytes total from sniffer file\n", total);
-
-//     free(buf);
-//     fclose(sOutput);
-
-//     Debug_printf("Sniffer dump completed.\n");
-
-//     return ESP_OK;
-// }
-
-// esp_err_t fnHttpService::post_handler_config(httpd_req_t *req)
 int fnHttpService::post_handler_config(struct mg_connection *c, struct mg_http_message *hm)
 {
 
@@ -505,7 +394,7 @@ int fnHttpService::get_handler_browse(mg_connection *c, mg_http_message *hm)
     {
         mg_http_reply(c, 403, "", "Bad browse request\n");
     }
-    
+
     return 0;
 }
 
@@ -525,7 +414,7 @@ int fnHttpService::get_handler_mount(mg_connection *c, mg_http_message *hm)
     {
         // Mount all the things
         Debug_printf("Mount all from webui\n");
-#ifdef BUILD_ATARI        
+#ifdef BUILD_ATARI
         theFuji.mount_all(false);
 #else
         theFuji.mount_all();
@@ -550,7 +439,7 @@ int fnHttpService::get_handler_eject(mg_connection *c, mg_http_message *hm)
     else
     {
 #ifdef BUILD_APPLE
-        if(theFuji.get_disks(ds)->disk_dev.device_active) //set disk switched only if device was previosly mounted. 
+        if(theFuji.get_disks(ds)->disk_dev.device_active) //set disk switched only if device was previosly mounted.
             theFuji.get_disks(ds)->disk_dev.switched = true;
 #endif
         theFuji.get_disks(ds)->disk_dev.unmount();
@@ -598,7 +487,67 @@ int fnHttpService::get_handler_eject(mg_connection *c, mg_http_message *hm)
     return 0;
 }
 
-void fnHttpService::cb(struct mg_connection *c, int ev, void *ev_data, void *fn_data)
+int fnHttpService::get_handler_hosts(mg_connection *c, mg_http_message *hm)
+{
+    std::string response = "";
+    for (int hs = 0; hs < 8; hs++) {
+        response += std::string(theFuji.get_hosts(hs)->get_hostname()) + "\n";
+    }
+    mg_http_reply(c, 200, "", "%s", response.c_str());
+    return 0;
+}
+
+int fnHttpService::post_handler_hosts(mg_connection *c, mg_http_message *hm)
+{
+    char hostslot[2] = "";
+    mg_http_get_var(&hm->query, "hostslot", hostslot, sizeof(hostslot));
+    char hostname[256] = "";
+    mg_http_get_var(&hm->query, "hostname", hostname, sizeof(hostname));
+
+    theFuji.set_slot_hostname(atoi(hostslot), hostname);
+
+    std::string response = "";
+    for (int hs = 0; hs < 8; hs++) {
+        response += std::string(theFuji.get_hosts(hs)->get_hostname()) + "\n";
+    }
+    mg_http_reply(c, 200, "", "%s", response.c_str());
+    return 0;
+}
+
+std::string fnHttpService::shorten_url(std::string url)
+{
+    int id = shortURLs.size();
+    shortURLs.push_back(url);
+
+    std::string shortened = "http://" + fnSystem.Net.get_hostname() + ":8000/url/" + std::to_string(id);
+    Debug_printf("Short URL /url/%d registered for URL: %s\n", id, url.c_str());
+    return shortened;
+}
+
+int fnHttpService::get_handler_shorturl(mg_connection *c, mg_http_message *hm)
+{
+    // Strip the /url/ from the path
+    std::string id_str = std::string(hm->uri.ptr).substr(5, hm->uri.len-5);
+    Debug_printf("Short URL handler: %s\n", id_str.c_str());
+
+    if (!std::all_of(id_str.begin(), id_str.end(), ::isdigit)) {
+        mg_http_reply(c, 400, "", "Bad Request");
+        return 0;
+    }
+
+    int id = std::stoi(id_str);
+    if (id > fnHTTPD.shortURLs.size())
+    {
+        mg_http_reply(c, 404, "", "Not Found");
+    }
+    else
+    {
+        mg_printf(c, "HTTP/1.1 303 See Other\r\nLocation: %s\r\nContent-Length: 0\r\n\r\n", fnHTTPD.shortURLs[id].c_str());
+    }
+    return 0;
+}
+
+void fnHttpService::cb(struct mg_connection *c, int ev, void *ev_data)
 {
     static const char *s_root_dir = "data/www";
 
@@ -672,7 +621,7 @@ void fnHttpService::cb(struct mg_connection *c, int ev, void *ev_data, void *fn_
             // get "exit" query variable
             char exit[10] = "";
             mg_http_get_var(&hm->query, "exit", exit, sizeof(exit));
-            if (atoi(exit)) 
+            if (atoi(exit))
             {
                 mg_http_reply(c, 200, "", "{\"result\": %d}\n", 1); // send reply
                 fnSystem.reboot(500, false); // deferred exit with code 0
@@ -685,14 +634,24 @@ void fnHttpService::cb(struct mg_connection *c, int ev, void *ev_data, void *fn_
                 fnSystem.reboot(500, true); // deferred exit with code 75 -> should be started again
             }
         }
+        else if (mg_http_match_uri(hm, "/hosts")) {
+            if (mg_vcasecmp(&hm->method, "POST") == 0)
+                post_handler_hosts(c, hm);
+            else
+                get_handler_hosts(c, hm);
+        }
+        else if (mg_http_match_uri(hm, "/url/*"))
+        {
+            get_handler_shorturl(c, hm);
+        }
         else
         // default handler, serve static content of www firectory
         {
             struct mg_http_serve_opts opts = {s_root_dir, NULL};
             mg_http_serve_dir(c, (mg_http_message*)ev_data, &opts);
         }
+        c->is_resp = 0;
     }
-    (void) fn_data;
 }
 
 struct mg_mgr * fnHttpService::start_server(serverstate &srvstate)

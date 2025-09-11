@@ -92,15 +92,15 @@ int SioCom::read()
 }
 
 // read bytes into buffer
-size_t SioCom::read(uint8_t *buffer, size_t length, bool command_mode)
+size_t SioCom::read(uint8_t *buffer, size_t length)
 {
-    return _sioPort->read(buffer, length, command_mode);
+    return _sioPort->read(buffer, length);
 }
 
 // alias to read
-size_t SioCom::readBytes(uint8_t *buffer, size_t length, bool command_mode)
+size_t SioCom::readBytes(uint8_t *buffer, size_t length)
 {
-    return  _sioPort->read(buffer, length, command_mode);
+    return  _sioPort->read(buffer, length);
 }
 
 // write single byte
@@ -190,10 +190,15 @@ size_t SioCom::print(unsigned long n, int base)
     }
 }
 
+void SioCom::bus_idle(uint16_t ms)
+{
+    _sioPort->bus_idle(ms);
+}
+
 // specific to SerialSioPort
 void SioCom::set_serial_port(const char *device, int command_pin, int proceed_pin)
 {
-    Debug_printf("SioCom::set_serial_port %s, %d, %d", device ? device : "NULL", command_pin, proceed_pin);
+    Debug_printf("SioCom::set_serial_port %s,%d,%d\n", device ? device : "NULL", command_pin, proceed_pin);
     _serialSio.set_port(device, command_pin, proceed_pin);
 };
 

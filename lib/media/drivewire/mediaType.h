@@ -14,13 +14,14 @@ enum mediatype_t
 {
     MEDIATYPE_UNKNOWN = 0,
     MEDIATYPE_DSK,
+    MEDIATYPE_MRM,
     MEDIATYPE_COUNT
 };
 
 class MediaType
 {
 protected:
-    FILE *_media_fileh = nullptr;
+    fnFile *_media_fileh = nullptr;
     uint32_t _media_image_size = 0;
     uint32_t _media_num_blocks = 256;
     uint16_t _media_sector_size = MEDIA_BLOCK_SIZE;
@@ -52,16 +53,18 @@ public:
     mediatype_t _mediatype = MEDIATYPE_UNKNOWN;
     bool _allow_hsio = true;
 
-    virtual mediatype_t mount(FILE *f, uint32_t disksize) = 0;
+    virtual mediatype_t mount(fnFile *f, uint32_t disksize) = 0;
     virtual void unmount();
 
     // Returns TRUE if an error condition occurred
-    virtual bool format(uint16_t *respopnsesize);
+    virtual bool format(uint16_t *responsesize);
 
     // Returns TRUE if an error condition occurred
     virtual bool read(uint32_t blockNum, uint16_t *readcount) = 0;
     // Returns TRUE if an error condition occurred
     virtual bool write(uint32_t blockNum, bool verify);
+
+    virtual void get_block_buffer(uint8_t **p_buffer, uint16_t *p_blk_size);
     
     virtual uint8_t status() = 0;
 

@@ -12,6 +12,7 @@
 #include "fsFlash.h"
 
 #include "utils.h"
+#include "string_utils.h"
 
 #include "../../encoding/base64.h"
 #include "../../encoding/hash.h"
@@ -113,7 +114,7 @@ void rc2014Fuji::rc2014_net_scan_networks()
     rc2014_send_buffer(response, response_len);
     // rc2014_send(rc2014_checksum(response, response_len));
     rc2014_flush();
-    
+
     rc2014_send_complete();
 }
 
@@ -144,11 +145,11 @@ void rc2014Fuji::rc2014_net_scan_result()
     memset(response, 0, sizeof(response));
     memcpy(response, &detail, sizeof(detail));
     response_len = 33;
-    
+
     rc2014_send_buffer(response, response_len);
     // rc2014_send(rc2014_checksum(response, response_len));
     rc2014_flush();
-    
+
     rc2014_send_complete();
 }
 
@@ -188,7 +189,7 @@ void rc2014Fuji::rc2014_net_get_ssid()
     rc2014_send_buffer(response, response_len);
     // rc2014_send(rc2014_checksum(response, response_len));
     rc2014_flush();
-    
+
     rc2014_send_complete();
 }
 
@@ -212,6 +213,10 @@ void rc2014Fuji::rc2014_net_set_ssid()
         rc2014_send_ack();
 
         bool save = true;
+
+        // URL Decode SSID/PASSWORD to handle special chars FIXME
+        //mstr::urlDecode(cfg.ssid, sizeof(cfg.ssid));
+        //mstr::urlDecode(cfg.password, sizeof(cfg.password));
 
         Debug_printf("Connecting to net: %s password: %s (length: %d)\n", cfg.ssid, cfg.password, strlen(cfg.password));
 
@@ -282,7 +287,7 @@ void rc2014Fuji::rc2014_disk_image_mount()
     Debug_printf("Selecting '%s' from host #%u as %s on D%u:\n",
                  disk.filename, disk.host_slot, flag, deviceSlot + 1);
 
-    
+
     rc2014_send_complete();
 
     disk.fileh = host.file_open(disk.filename, disk.filename, sizeof(disk.filename), flag);
@@ -303,7 +308,7 @@ void rc2014Fuji::rc2014_set_boot_config()
     Debug_println("Fuji cmd: SET BOOT CONFIG");
     rc2014_send_ack();
     boot_config = cmdFrame.aux1;
-    
+
     rc2014_send_complete();
 }
 
@@ -370,7 +375,7 @@ void rc2014Fuji::rc2014_disk_image_umount()
     rc2014_send_ack();
 
     unsigned char ds = cmdFrame.aux1;
-    
+
     _fnDisks[ds].disk_dev.unmount();
     _fnDisks[ds].reset();
 
@@ -578,7 +583,7 @@ void rc2014Fuji::rc2014_get_directory_position()
     response[0] = pos & 0xff;
     response[1] = (pos & 0xff00) >> 8;
     response_len = 2;
-    
+
     rc2014_send_buffer(response, response_len);
     // rc2014_send(rc2014_checksum(response, response_len));
     rc2014_flush();
@@ -651,7 +656,7 @@ void rc2014Fuji::rc2014_get_adapter_config()
     rc2014_send_buffer(response, response_len);
     //rc2014_send(rc2014_checksum(response, response_len));
     rc2014_flush();
-    
+
     rc2014_send_complete();
 
 }
@@ -677,7 +682,7 @@ void rc2014Fuji::rc2014_new_disk()
 
     if (host.file_exists((const char *)p))
     {
-        
+
         rc2014_send_ack();
         return;
     }
@@ -692,7 +697,7 @@ void rc2014Fuji::rc2014_new_disk()
 
     disk.disk_dev.write_blank(disk.fileh, numBlocks);
 
-    
+
     rc2014_send_complete();
 
     fclose(disk.fileh);
@@ -716,7 +721,7 @@ void rc2014Fuji::rc2014_read_host_slots()
     rc2014_send_buffer(response, response_len);
     // rc2014_send(rc2014_checksum(response, response_len));
     rc2014_flush();
-    
+
     rc2014_send_complete();
 }
 
@@ -730,7 +735,7 @@ void rc2014Fuji::rc2014_write_host_slots()
     char hostSlots[MAX_HOSTS][MAX_HOSTNAME_LEN];
     rc2014_recv_buffer((uint8_t *)hostSlots, sizeof(hostSlots));
     rc2014_send_ack();
-    
+
     for (int i = 0; i < MAX_HOSTS; i++)
     {
         hostMounted[i] = false;
@@ -750,6 +755,14 @@ void rc2014Fuji::rc2014_set_host_prefix()
 // Retrieve host path prefix
 void rc2014Fuji::rc2014_get_host_prefix()
 {
+}
+
+// Public method to update host in specific slot
+fujiHost *rc2014Fuji::set_slot_hostname(int host_slot, char *hostname)
+{
+    _fnHosts[host_slot].set_hostname(hostname);
+    _populate_config_from_slots();
+    return &_fnHosts[host_slot];
 }
 
 // Send device slot data to computer
@@ -786,7 +799,7 @@ void rc2014Fuji::rc2014_read_device_slots()
     rc2014_send_buffer(response, response_len);
     // rc2014_send(rc2014_checksum(response, response_len));
     rc2014_flush();
-    
+
     rc2014_send_complete();
 }
 
@@ -805,7 +818,7 @@ void rc2014Fuji::rc2014_write_device_slots()
 
     rc2014_recv_buffer((uint8_t *)&diskSlots, sizeof(diskSlots));
     rc2014_send_ack();
-    
+
 
     // Load the data into our current device array
     for (int i = 0; i < MAX_DISK_DEVICES; i++)
@@ -916,7 +929,7 @@ void rc2014Fuji::rc2014_get_device_filename()
     rc2014_send_buffer(response, response_len);
     // rc2014_send(rc2014_checksum(response, response_len));
     rc2014_flush();
-    
+
     rc2014_send_complete();
 }
 
@@ -924,7 +937,7 @@ void rc2014Fuji::rc2014_get_device_filename()
 void rc2014Fuji::rc2014_enable_device()
 {
     unsigned char d = cmdFrame.aux1;
-    
+
     rc2014_send_ack();
 
     rc2014Bus.enableDevice(d);
@@ -955,7 +968,7 @@ void rc2014Fuji::rc2014_device_enabled_status()
     rc2014_send_buffer(response, response_len);
     // rc2014_send(rc2014_checksum(response, response_len));
     rc2014_flush();
-    
+
     rc2014_send_complete();
 }
 
@@ -1171,54 +1184,26 @@ void rc2014Fuji::rc2014_hash_input()
     rc2014_send_ack();
     rc2014_recv_buffer((uint8_t *)p.data(), len);
     rc2014_send_ack();
-    base64.base64_buffer += std::string((const char *)p.data(), len);
+    hasher.add_data(p);
 
     rc2014_send_complete();
 }
 
-void rc2014Fuji::rc2014_hash_compute()
+void rc2014Fuji::rc2014_hash_compute(bool clear_data)
 {
-    uint16_t m = hash_mode = cmdFrame.aux1;
-
     Debug_printf("FUJI: HASH COMPUTE\n");
-
+    algorithm = Hash::to_algorithm(cmdFrame.aux1);
     rc2014_send_ack();
-
-    hasher.compute(m, base64.base64_buffer);
-    base64.base64_buffer.clear();
-    base64.base64_buffer.shrink_to_fit();
-
+    hasher.compute(algorithm, clear_data);
     rc2014_send_complete();
 }
 
 void rc2014Fuji::rc2014_hash_length()
 {
-    unsigned char r = 0;
-    uint16_t m = cmdFrame.aux1;
-
     Debug_printf("FUJI: HASH LENGTH\n");
-
-    switch (hash_mode)
-    {
-        case 0: // MD5
-            r = 16;
-            break;
-        case 1: // SHA1
-            r = 20;
-            break;
-        case 2: // SHA256
-            r = 32;
-            break;
-        case 3: // SHA512
-            r = 64;
-            break;
-    }
-
-    if (m == 1)  // Hex output
-        m <<= 1; // double it.
-
+    bool is_hex = cmdFrame.aux1;
+    uint8_t r = hasher.hash_length(algorithm, is_hex);
     rc2014_send_ack();
-
     rc2014_send_buffer((uint8_t *)r, 1);
     rc2014_flush();
     rc2014_send_complete();
@@ -1226,17 +1211,28 @@ void rc2014Fuji::rc2014_hash_length()
 
 void rc2014Fuji::rc2014_hash_output()
 {
-    uint16_t olen = 0;
-    uint16_t m = cmdFrame.aux1;
-
     Debug_printf("FUJI: HASH OUTPUT\n");
+    uint16_t is_hex = cmdFrame.aux1;
 
-    std::vector<uint8_t> o = hasher.hash_output(m, hash_mode, olen);
+    std::vector<uint8_t> hashed_data;
+    if (is_hex) {
+        std::string hex = hasher.output_hex();
+        hashed_data = std::vector<uint8_t>(hex.begin(), hex.end());
+    } else {
+        hashed_data = hasher.output_binary();
+    }
+
     rc2014_send_ack();
-
-    rc2014_send_buffer(o.data(), olen);
+    rc2014_send_buffer(hashed_data.data(), hashed_data.size());
     rc2014_flush();
+    rc2014_send_complete();
+}
 
+void rc2014Fuji::rc2014_hash_clear()
+{
+    Debug_printf("FUJI: HASH INIT\n");
+    rc2014_send_ack();
+    hasher.clear();
     rc2014_send_complete();
 }
 
@@ -1292,7 +1288,7 @@ void rc2014Fuji::mount_all()
         if (disk.access_mode == DISK_ACCESS_MODE_WRITE)
             flag[1] = '+';
 
-        if (disk.host_slot != INVALID_HOST_SLOT)
+        if (disk.host_slot != INVALID_HOST_SLOT && strlen(disk.filename) > 0)
         {
             nodisks = false; // We have a disk in a slot
 
@@ -1496,13 +1492,19 @@ void rc2014Fuji::rc2014_process(uint32_t commanddata, uint8_t checksum)
         rc2014_hash_input();
         break;
     case FUJICMD_HASH_COMPUTE:
-        rc2014_hash_compute();
+        rc2014_hash_compute(true);
+        break;
+    case FUJICMD_HASH_COMPUTE_NO_CLEAR:
+        rc2014_hash_compute(false);
         break;
     case FUJICMD_HASH_LENGTH:
         rc2014_hash_length();
         break;
     case FUJICMD_HASH_OUTPUT:
         rc2014_hash_output();
+        break;
+    case FUJICMD_HASH_CLEAR:
+        rc2014_hash_clear();
         break;
     default:
         fnUartDebug.printf("rc2014_process() not implemented yet for this device. Cmd received: %02x\n", cmdFrame.comnd);

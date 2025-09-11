@@ -12,21 +12,13 @@ public:
     virtual bool read(uint16_t sectornum, uint16_t *readcount) override;
     virtual bool write(uint16_t sectornum, bool verify) override;
 
-    virtual bool format(uint16_t *respopnsesize) override;
+    virtual bool format(uint16_t *responsesize) override;
 
-#ifdef ESP_PLATFORM
-    virtual mediatype_t mount(FILE *f, uint32_t disksize) override;
-#else
-    virtual mediatype_t mount(FileHandler *f, uint32_t disksize) override;
-#endif
+    virtual mediatype_t mount(fnFile *f, uint32_t disksize) override;
 
     virtual void status(uint8_t statusbuff[4]) override;
 
-#ifdef ESP_PLATFORM
-    static bool create(FILE *f, uint16_t sectorSize, uint16_t numSectors);
-#else
-    static bool create(FileHandler *f, uint16_t sectorSize, uint16_t numSectors);
-#endif
+    static bool create(fnFile *f, uint16_t sectorSize, uint16_t numSectors);
 };
 
 

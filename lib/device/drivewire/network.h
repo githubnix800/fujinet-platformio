@@ -1,8 +1,11 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#ifdef ESP32_PLATFORM
 #include <driver/timer.h>
+#endif
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -64,6 +67,21 @@ public:
      */
     void poll_interrupt();
 
+    /**
+     * @brief Ready?
+     */
+    void ready();
+
+    /**
+     * @brief Get last error
+     */
+    void send_error();
+
+    /**
+     * @brief send response
+     */
+    void send_response();
+    
     /**
      * Called for DRIVEWIRE Command 'O' to open a connection to a network protocol, allocate all buffers,
      */
@@ -133,6 +151,11 @@ public:
 private:
 
     /**
+     * @brief the response buffer
+     */
+    std::string response;
+
+    /**
      * Buffer for holding devicespec
      */
     uint8_t devicespecBuf[256];
@@ -155,7 +178,7 @@ private:
     /**
      * The PeoplesUrlParser object used to hold/process a URL
      */
-    PeoplesUrlParser *urlParser = nullptr;
+    std::unique_ptr<PeoplesUrlParser> urlParser = nullptr;
 
     /**
      * Instance of currently open network protocol
@@ -259,7 +282,7 @@ private:
     /**
      * Bytes sent of current JSON query object.
      */
-    unsigned short json_bytes_remaining=0;
+    unsigned short json_bytes_remaining = 0;
 
     /**
      * Called to pulse the CD interrupt, rate limited by the interrupt timer.
@@ -296,7 +319,7 @@ private:
      * Preprocess a URL given aux1 open mode. This is used to work around various assumptions that different
      * disk utility packages do when opening a device, such as adding wildcards for directory opens. 
      * 
-     * The resulting URL is then sent into EdURLParser to get our URLParser object which is used in the rest
+     * The resulting URL is then sent into a URL Parser to get our URLParser object which is used in the rest
      * of drivewireNetwork.
      * 
      * This function is a mess, because it has to be, maybe we can factor it out, later. -Thom

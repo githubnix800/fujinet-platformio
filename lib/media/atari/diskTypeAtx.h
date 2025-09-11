@@ -3,6 +3,7 @@
 
 #ifdef ESP_PLATFORM
 #include <esp_timer.h>
+#include "../../include/PSRAMAllocator.h"
 #endif
 
 #include <vector>
@@ -156,7 +157,11 @@ public:
     uint8_t * data = nullptr;
 
     // Actual sectors
+#ifdef ESP_PLATFORM
+    std::vector<AtxSector,PSRAMAllocator<AtxSector>> sectors;
+#else
     std::vector<AtxSector> sectors;
+#endif
 
     ~AtxTrack();
     AtxTrack();
@@ -188,7 +193,11 @@ private:
     esp_timer_handle_t _atx_timer = nullptr;
 #endif
 
+#ifdef ESP_PLATFORM
+    std::vector<AtxTrack,PSRAMAllocator<AtxTrack>> _tracks;
+#else
     std::vector<AtxTrack> _tracks;
+#endif
 
     // ATX header.density
     uint8_t _atx_density = ATX_DENSITY_SINGLE;
@@ -215,13 +224,9 @@ private:
 
 public:
     virtual bool read(uint16_t sectornum, uint16_t *readcount) override;
-    virtual bool format(uint16_t *respopnsesize) override;
+    virtual bool format(uint16_t *responsesize) override;
 
-#ifdef ESP_PLATFORM
-    virtual mediatype_t mount(FILE *f, uint32_t disksize) override;
-#else
-    virtual mediatype_t mount(FileHandler *f, uint32_t disksize) override;
-#endif
+    virtual mediatype_t mount(fnFile *f, uint32_t disksize) override;
 
     virtual void status(uint8_t statusbuff[4]) override;
 

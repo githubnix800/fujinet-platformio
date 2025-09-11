@@ -54,9 +54,9 @@ public:
     // read single byte
     int read();
     // read bytes into buffer
-    size_t read(uint8_t *buffer, size_t length, bool command_mode=false);
+    size_t read(uint8_t *buffer, size_t length);
     // alias to read
-    size_t readBytes(uint8_t *buffer, size_t length, bool command_mode=false);
+    size_t readBytes(uint8_t *buffer, size_t length);
 
     // write single byte
     ssize_t write(uint8_t b);
@@ -72,6 +72,8 @@ public:
     size_t print(unsigned int n, int base = 10);
     size_t print(long n, int base = 10);
     size_t print(unsigned long n, int base = 10);
+
+    void bus_idle(uint16_t ms);
 
     // specific to SerialSioPort
     void set_serial_port(const char *device, int command_pin, int proceed_pin);

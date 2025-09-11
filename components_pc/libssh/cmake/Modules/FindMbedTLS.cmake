@@ -34,7 +34,7 @@ set(_MBEDTLS_ROOT_HINTS_AND_PATHS
 
 find_path(MBEDTLS_INCLUDE_DIR
     NAMES
-        mbedtls/config.h
+        mbedtls/ssl.h
     HINTS
         ${_MBEDTLS_ROOT_HINTS_AND_PATHS}
     PATH_SUFFIXES
@@ -43,7 +43,7 @@ find_path(MBEDTLS_INCLUDE_DIR
 
 find_library(MBEDTLS_SSL_LIBRARY
         NAMES
-            mbedtls
+            libmbedtls.a
         HINTS
             ${_MBEDTLS_ROOT_HINTS_AND_PATHS}
         PATH_SUFFIXES
@@ -53,7 +53,7 @@ find_library(MBEDTLS_SSL_LIBRARY
 
 find_library(MBEDTLS_CRYPTO_LIBRARY
         NAMES
-            mbedcrypto
+            libmbedcrypto.a
         HINTS
             ${_MBEDTLS_ROOT_HINTS_AND_PATHS}
         PATH_SUFFIXES
@@ -62,7 +62,7 @@ find_library(MBEDTLS_CRYPTO_LIBRARY
 
 find_library(MBEDTLS_X509_LIBRARY
         NAMES
-            mbedx509
+            libmbedx509.a
         HINTS
             ${_MBEDTLS_ROOT_HINTS_AND_PATHS}
         PATH_SUFFIXES
@@ -93,7 +93,7 @@ if (MBEDTLS_VERSION)
             in the system variable MBEDTLS_ROOT_DIR"
     )
 else (MBEDTLS_VERSION)
-    find_package_handle_standard_args(MBedTLS
+    find_package_handle_standard_args(MbedTLS
         "Could NOT find mbedTLS, try to set the path to mbedLS root folder in
         the system variable MBEDTLS_ROOT_DIR"
         MBEDTLS_INCLUDE_DIR

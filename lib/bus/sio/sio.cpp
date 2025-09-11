@@ -59,7 +59,7 @@ void virtualDevice::bus_to_computer(uint8_t *buf, uint16_t len, bool err)
 
     // Write data frame
 #ifdef ESP_PLATFORM
-    UARTManager *uart = sio_get_bus().get_modem()->get_uart();
+    UARTManager *uart = sio_get_bus().uart;
     uart->write(buf, len);
     // Write checksum
     uart->write(sio_checksum(buf, len));
@@ -87,7 +87,7 @@ uint8_t virtualDevice::bus_to_peripheral(uint8_t *buf, unsigned short len)
     Debug_printf("<-SIO read %hu bytes\n", len);
 
 #ifdef ESP_PLATFORM
-    UARTManager *uart = sio_get_bus().get_modem()->get_uart();
+    UARTManager *uart = sio_get_bus().uart;
 
     __BEGIN_IGNORE_UNUSEDVARS
     size_t l = uart->readBytes(buf, len);
@@ -138,7 +138,7 @@ uint8_t virtualDevice::bus_to_peripheral(uint8_t *buf, unsigned short len)
 void virtualDevice::sio_nak()
 {
 #ifdef ESP_PLATFORM
-    UARTManager *uart = sio_get_bus().get_modem()->get_uart();
+    UARTManager *uart = sio_get_bus().uart;
     uart->write('N');
     uart->flush();
 #else
@@ -153,7 +153,7 @@ void virtualDevice::sio_nak()
 void virtualDevice::sio_ack()
 {
 #ifdef ESP_PLATFORM
-    UARTManager *uart = sio_get_bus().get_modem()->get_uart();
+    UARTManager *uart = sio_get_bus().uart;
     uart->write('A');
     fnSystem.delay_microseconds(DELAY_T5); //?
     uart->flush();
@@ -188,7 +188,7 @@ void virtualDevice::sio_complete()
 {
     fnSystem.delay_microseconds(DELAY_T5);
 #ifdef ESP_PLATFORM
-    sio_get_bus().get_modem()->get_uart()->write('C');
+    sio_get_bus().uart->write('C');
 #else
     fnSioCom.write('C');
 #endif
@@ -200,7 +200,7 @@ void virtualDevice::sio_error()
 {
     fnSystem.delay_microseconds(DELAY_T5);
 #ifdef ESP_PLATFORM
-    sio_get_bus().get_modem()->get_uart()->write('E');
+    sio_get_bus().uart->write('E');
 #else
     fnSioCom.write('E');
 #endif
@@ -234,7 +234,7 @@ void systemBus::_sio_process_cmd()
         _modemDev->modemActive = false;
         Debug_println("Modem was active - resetting SIO baud");
 #ifdef ESP_PLATFORM
-        _modemDev->get_uart()->set_baudrate(_sioBaud);
+        SYSTEM_BUS.uart->set_baudrate(_sioBaud);
 #else
         fnSioCom.set_baudrate(_sioBaud);
 #endif
@@ -246,7 +246,7 @@ void systemBus::_sio_process_cmd()
     tempFrame.checksum = 0;
 
 #ifdef ESP_PLATFORM
-    if (_modemDev->get_uart()->readBytes((uint8_t *)&tempFrame, sizeof(tempFrame)) != sizeof(tempFrame))
+    if (SYSTEM_BUS.uart->readBytes((uint8_t *)&tempFrame, sizeof(tempFrame)) != sizeof(tempFrame))
     {
         // Debug_println("Timeout waiting for data after CMD pin asserted");
         return;
@@ -508,7 +508,7 @@ void systemBus::service()
     {
         // flush UART input
 #ifdef ESP_PLATFORM
-        _modemDev->get_uart()->flush_input();
+        SYSTEM_BUS.uart->flush_input();
 #else
         if (fnSioCom.get_sio_mode() == SioCom::sio_mode::SERIAL)
             fnSioCom.flush_input();
@@ -536,7 +536,7 @@ void systemBus::setup()
 
 #ifdef ESP_PLATFORM
     // Set up UART
-    _modemDev->get_uart()->begin(_sioBaud);
+    SYSTEM_BUS.uart->begin(_sioBaud);
 
     // INT PIN
     fnSystem.set_pin_mode(PIN_INT, gpio_mode_t::GPIO_MODE_OUTPUT_OD, SystemManager::pull_updown_t::PULL_UP);
@@ -551,9 +551,8 @@ void systemBus::setup()
     //fnSystem.set_pin_mode(PIN_CMD, PINMODE_INPUT | PINMODE_PULLUP); // There's no PULLUP/PULLDOWN on pins 34-39
     fnSystem.set_pin_mode(PIN_CMD, gpio_mode_t::GPIO_MODE_INPUT);
     // CKI PIN
-    //fnSystem.set_pin_mode(PIN_CKI, PINMODE_OUTPUT);
     fnSystem.set_pin_mode(PIN_CKI, gpio_mode_t::GPIO_MODE_OUTPUT_OD);
-    fnSystem.digital_write(PIN_CKI, DIGI_LOW);
+    fnSystem.digital_write(PIN_CKI, DIGI_HIGH);
     // CKO PIN
     fnSystem.set_pin_mode(PIN_CKO, gpio_mode_t::GPIO_MODE_INPUT);
 
@@ -568,12 +567,12 @@ void systemBus::setup()
     else
         setHighSpeedIndex(_sioHighSpeedIndex);
 
-    _modemDev->get_uart()->flush_input();
+    SYSTEM_BUS.uart->flush_input();
 #else
     // Setup SIO ports: serial UART and NetSIO
     fnSioCom.set_serial_port(Config.get_serial_port().c_str(), Config.get_serial_command(), Config.get_serial_proceed()); // UART
-    fnSioCom.set_netsio_host(Config.get_netsio_host().c_str(), Config.get_netsio_port()); // NetSIO
-    fnSioCom.set_sio_mode(Config.get_netsio_enabled() ? SioCom::sio_mode::NETSIO : SioCom::sio_mode::SERIAL);
+    fnSioCom.set_netsio_host(Config.get_boip_host().c_str(), Config.get_boip_port()); // NetSIO
+    fnSioCom.set_sio_mode(Config.get_boip_enabled() ? SioCom::sio_mode::NETSIO : SioCom::sio_mode::SERIAL);
     fnSioCom.begin(_sioBaud);
 
     fnSioCom.set_interrupt(false);
@@ -683,11 +682,15 @@ void systemBus::toggleBaudrate()
     if (useUltraHigh == true)
         baudrate = _sioBaud == SIO_STANDARD_BAUDRATE ? _sioBaudUltraHigh : SIO_STANDARD_BAUDRATE;
 
-    Debug_printf("Toggling baudrate from %d to %d\n", _sioBaud, baudrate);
+    // Debug_printf("Toggling baudrate from %d to %d\n", _sioBaud, baudrate);
     _sioBaud = baudrate;
 #ifdef ESP_PLATFORM
-    _modemDev->get_uart()->set_baudrate(_sioBaud);
+    SYSTEM_BUS.uart->set_baudrate(_sioBaud);
 #else
+    fnSioCom.flush_input();
+    fnSioCom.flush();
+    // hmm, calling flush() may not be enough to empty TX buffer
+    fnSystem.delay_microseconds(2000);
     fnSioCom.set_baudrate(_sioBaud);
 #endif
 }
@@ -708,7 +711,7 @@ void systemBus::setBaudrate(int baud)
     Debug_printf("Changing baudrate from %d to %d\n", _sioBaud, baud);
     _sioBaud = baud;
 #ifdef ESP_PLATFORM
-    _modemDev->get_uart()->set_baudrate(baud);
+    SYSTEM_BUS.uart->set_baudrate(baud);
 #else
     fnSioCom.set_baudrate(baud);
 #endif
@@ -796,6 +799,12 @@ void systemBus::sio_empty_ack()
 
 void systemBus::setUDPHost(const char *hostname, int port)
 {
+    if (_udpDev == nullptr)
+    {
+        Debug_printf("ERROR: UDP Device is not set. Cannot set HOST/PORT");
+        return;
+    }
+
     // Turn off if hostname is STOP
     if (hostname != nullptr && !strcmp(hostname, "STOP"))
     {
@@ -830,6 +839,9 @@ void systemBus::setUDPHost(const char *hostname, int port)
         Debug_printf("UDPStream port not provided or invalid (%d), setting to 5004\n", port);
     }
 
+    // Set if server mode or not
+    _udpDev->udpstreamIsServer = Config.get_network_udpstream_servermode();
+
     // Restart UDP Stream mode if needed
     if (_udpDev->udpstreamActive)
         _udpDev->sio_disable_udpstream();
@@ -847,7 +859,7 @@ void systemBus::setUltraHigh(bool _enable, int _ultraHighBaud)
 #ifdef ESP_PLATFORM
         ledc_channel_config_t ledc_channel_sio_ckin;
         ledc_channel_sio_ckin.gpio_num = PIN_CKI;
-        ledc_channel_sio_ckin.speed_mode = LEDC_HIGH_SPEED_MODE;
+        ledc_channel_sio_ckin.speed_mode = LEDC_ESP32XX_HIGH_SPEED;
         ledc_channel_sio_ckin.channel = LEDC_CHANNEL_1;
         ledc_channel_sio_ckin.intr_type = LEDC_INTR_DISABLE;
         ledc_channel_sio_ckin.timer_sel = LEDC_TIMER_1;
@@ -857,7 +869,7 @@ void systemBus::setUltraHigh(bool _enable, int _ultraHighBaud)
         // Setup PWM timer for CLOCK IN
         ledc_timer_config_t ledc_timer;
         ledc_timer.clk_cfg = LEDC_AUTO_CLK;
-        ledc_timer.speed_mode = LEDC_HIGH_SPEED_MODE;
+        ledc_timer.speed_mode = LEDC_ESP32XX_HIGH_SPEED;
         ledc_timer.duty_resolution = LEDC_TIMER_1_BIT;
         ledc_timer.timer_num = LEDC_TIMER_1;
         ledc_timer.freq_hz = _ultraHighBaud;
@@ -865,13 +877,13 @@ void systemBus::setUltraHigh(bool _enable, int _ultraHighBaud)
 
         _sioBaudUltraHigh = _ultraHighBaud;
 
-        Debug_printf("Enabling SIO clock, rate: %lu\n", _ultraHighBaud);
+        Debug_printf("Enabling SIO clock, rate: %u\n", _ultraHighBaud);
 
         // Enable PWM on CLOCK IN
 #ifdef ESP_PLATFORM
         ledc_channel_config(&ledc_channel_sio_ckin);
         ledc_timer_config(&ledc_timer);
-        _modemDev->get_uart()->set_baudrate(_sioBaudUltraHigh);
+        SYSTEM_BUS.uart->set_baudrate(_sioBaudUltraHigh);
 #else
         fnSioCom.set_baudrate(_sioBaudUltraHigh);
 #endif
@@ -881,8 +893,9 @@ void systemBus::setUltraHigh(bool _enable, int _ultraHighBaud)
         Debug_printf("Disabling SIO clock.\n");
         _sioBaudUltraHigh = 0;
 #ifdef ESP_PLATFORM
-        ledc_stop(LEDC_HIGH_SPEED_MODE, LEDC_CHANNEL_1, 0);
-        _modemDev->get_uart()->set_baudrate(SIO_STANDARD_BAUDRATE);
+        ledc_stop(LEDC_ESP32XX_HIGH_SPEED, LEDC_CHANNEL_1, 0);
+        ledc_stop(LEDC_SPEED_MODE_MAX, LEDC_CHANNEL_1, 0);
+        SYSTEM_BUS.uart->set_baudrate(SIO_STANDARD_BAUDRATE);
 #else
         fnSioCom.set_baudrate(SIO_STANDARD_BAUDRATE);
 #endif

@@ -12,6 +12,8 @@
 
 #include "../network-protocol/status_error_codes.h"
 
+#include <vector>
+
 
 NetworkProtocolFTP::NetworkProtocolFTP(std::string *rx_buf, std::string *tx_buf, std::string *sp_buf)
     : NetworkProtocolFS(rx_buf, tx_buf, sp_buf)
@@ -37,14 +39,14 @@ bool NetworkProtocolFTP::open_file_handle()
 
     switch (aux1_open)
     {
-    case 4:
+    case PROTOCOL_OPEN_READ:
         stor = false;
         break;
-    case 8:
+    case PROTOCOL_OPEN_WRITE:
         stor = true;
         break;
-    case 9:
-    case 12:
+    case PROTOCOL_OPEN_APPEND:
+    case PROTOCOL_OPEN_READWRITE:
         error = NETWORK_ERROR_NOT_IMPLEMENTED;
         return true;
         break;

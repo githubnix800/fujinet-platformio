@@ -4,18 +4,25 @@
 
 #ifdef ESP_PLATFORM
 #include <driver/ledc.h>
+#include "../../../include/PSRAMAllocator.h"
 #endif
 
 #include <cstdint>
 #include <cstring>
+#include <errno.h>
 #ifndef ESP_PLATFORM // why ESP does not like it? it throws a linker error undefined reference to 'basename'
 #include <libgen.h>
 #endif
-#include <errno.h>
+#include <map>
+#include <new>
+#include <vector>
 #include "compat_string.h"
 
 #include "../../../include/debug.h"
 
+#include "directoryPageGroup.h"
+#include "fujiCmd.h"
+#include "httpService.h"
 #include "fnSystem.h"
 #include "fnConfig.h"
 #include "fsFlash.h"
@@ -24,16 +31,23 @@
 
 #include "led.h"
 #include "utils.h"
+#include "string_utils.h"
 
-#include "../../encoding/base64.h"
-#include "../../encoding/hash.h"
+#include "base64.h"
+#include "hash.h"
+#include "../../qrcode/qrmanager.h"
 
-#define ADDITIONAL_DETAILS_BYTES 10
+#define ADDITIONAL_DETAILS_BYTES 13
+#define FF_DIR 0x01
+#define FF_TRUNC 0x02
 
 sioFuji theFuji; // global fuji device object
 
-// sioDisk sioDiskDevs[MAX_HOSTS];
-sioNetwork sioNetDevs[MAX_NETWORK_DEVICES];
+#ifdef ESP_PLATFORM
+std::unique_ptr<sioNetwork, PSRAMDeleter<sioNetwork>> sioNetDevs[MAX_NETWORK_DEVICES];
+#else
+std::unique_ptr<sioNetwork> sioNetDevs[MAX_NETWORK_DEVICES];
+#endif
 
 bool _validate_host_slot(uint8_t slot, const char *dmsg = nullptr);
 bool _validate_device_slot(uint8_t slot, const char *dmsg = nullptr);
@@ -124,6 +138,30 @@ sioFuji::sioFuji()
     // Helpful for debugging
     for (int i = 0; i < MAX_HOSTS; i++)
         _fnHosts[i].slotid = i;
+
+#ifdef ESP_PLATFORM
+    for (int i = 0; i < MAX_NETWORK_DEVICES; ++i)
+    {
+        PSRAMAllocator<sioNetwork> allocator;
+        sioNetwork* ptr = allocator.allocate(1); // Allocate memory for one sioNetwork object
+
+        if (ptr != nullptr)
+        {
+            new (ptr) sioNetwork(); // Construct the object using placement new
+            sioNetDevs[i] = std::unique_ptr<sioNetwork, PSRAMDeleter<sioNetwork>>(ptr); // Store in smart pointer
+        }
+    }
+#else
+    for (int i = 0; i < MAX_NETWORK_DEVICES; i++)
+    {
+        sioNetwork *ptr = (sioNetwork *) malloc(sizeof(sioNetwork));
+        if (ptr != nullptr) {
+            new (ptr) sioNetwork();
+            sioNetDevs[i] = std::unique_ptr<sioNetwork>(ptr);
+        }
+    }
+#endif
+
 }
 
 // Status
@@ -217,7 +255,6 @@ void sioFuji::sio_net_get_ssid()
 void sioFuji::sio_net_set_ssid()
 {
     Debug_println("Fuji cmd: SET SSID");
-    int i;
 
     // Data for  FUJICMD_SET_SSID
     struct
@@ -235,7 +272,7 @@ void sioFuji::sio_net_set_ssid()
 
     bool save = cmdFrame.aux1 != 0;
 
-    Debug_printf("Connecting to net: >%s< password: >%s<\r\n", cfg.ssid, cfg.password);
+    // Debug_printf("Connecting to net: >%s< password: >%s<\r\n", cfg.ssid, cfg.password);
 
     int test_result = fnWiFi.test_connect(cfg.ssid, cfg.password);
     if (test_result != 0)
@@ -248,65 +285,7 @@ void sioFuji::sio_net_set_ssid()
     // Only save these if we're asked to, otherwise assume it was a test for connectivity
     if (save)
     {
-        // 1. if this is a new SSID and not in the old stored, we should push the current one to the top of the stored configs, and everything else down.
-        // 2. If this was already in the stored configs, push the stored one to the top, remove the new one from stored so it becomes current only.
-        // 3. if this is same as current, then just save it again. User reconnected to current, nothing to change in stored. This is default if above don't happen
-
-        int ssid_in_stored = -1;
-        for (i = 0; i < MAX_WIFI_STORED; i++)
-        {
-            if (Config.get_wifi_stored_ssid(i) == cfg.ssid)
-            {
-                ssid_in_stored = i;
-                break;
-            }
-        }
-
-        // case 1
-        if (ssid_in_stored == -1 && Config.have_wifi_info() && Config.get_wifi_ssid() != cfg.ssid)
-        {
-            Debug_println("Case 1: Didn't find new ssid in stored, and it's new. Pushing everything down 1 and old current to 0");
-            // Move enabled stored down one, last one will drop off
-            for (int j = MAX_WIFI_STORED - 1; j > 0; j--)
-            {
-                bool enabled = Config.get_wifi_stored_enabled(j - 1);
-                if (!enabled)
-                    continue;
-
-                Config.store_wifi_stored_ssid(j, Config.get_wifi_stored_ssid(j - 1));
-                Config.store_wifi_stored_passphrase(j, Config.get_wifi_stored_passphrase(j - 1));
-                Config.store_wifi_stored_enabled(j, true); // already confirmed this is enabled
-            }
-            // push the current to the top of stored
-            Config.store_wifi_stored_ssid(0, Config.get_wifi_ssid());
-            Config.store_wifi_stored_passphrase(0, Config.get_wifi_passphrase());
-            Config.store_wifi_stored_enabled(0, true);
-        }
-
-        // case 2
-        if (ssid_in_stored != -1 && Config.have_wifi_info() && Config.get_wifi_ssid() != cfg.ssid)
-        {
-            Debug_printf("Case 2: Found new ssid in stored at %d, and it's not current (should never happen). Pushing everything down 1 and old current to 0\n", ssid_in_stored);
-            // found the new SSID at ssid_in_stored, so move everything above it down one slot, and store the current at 0
-            for (int j = ssid_in_stored; j > 0; j--)
-            {
-                Config.store_wifi_stored_ssid(j, Config.get_wifi_stored_ssid(j - 1));
-                Config.store_wifi_stored_passphrase(j, Config.get_wifi_stored_passphrase(j - 1));
-                Config.store_wifi_stored_enabled(j, true);
-            }
-
-            // push the current to the top of stored
-            Config.store_wifi_stored_ssid(0, Config.get_wifi_ssid());
-            Config.store_wifi_stored_passphrase(0, Config.get_wifi_passphrase());
-            Config.store_wifi_stored_enabled(0, true);
-        }
-
-        // save the new SSID as current
-        Config.store_wifi_ssid(cfg.ssid, sizeof(cfg.ssid));
-        // Clear text here, it will be encrypted internally if enabled for encryption
-        Config.store_wifi_passphrase(cfg.password, sizeof(cfg.password));
-
-        Config.save();
+        fnWiFi.store_wifi(cfg.ssid, cfg.password);
     }
     Debug_println("Restarting WiFiManager");
     fnWiFi.start();
@@ -333,6 +312,60 @@ void sioFuji::sio_net_get_wifi_enabled()
     uint8_t e = Config.get_wifi_enabled() ? 1 : 0;
     Debug_printf("Fuji cmd: GET WIFI ENABLED: %d\n", e);
     bus_to_computer(&e, sizeof(e), false);
+}
+
+// Set SIO baudrate
+void sioFuji::sio_set_baudrate()
+{
+   
+    int br = 0;
+
+    switch(cmdFrame.aux1) {
+
+        case 0:
+            br = 19200;
+            break;
+
+        case 1:
+            br = 38400;
+            break;
+
+        case 2:
+            br = 57600;
+            break;
+
+        case 3:
+            br = 115200;
+            break;
+
+        case 4:
+            br = 230400;
+            break;
+
+        case 5:
+            br = 460800;
+            break;
+
+        case 6:
+            br = 921600;
+            break;
+
+        default:
+            sio_error();
+            return;
+    }
+  
+    // send complete with current baudrate
+    sio_complete();
+
+#ifdef ESP_PLATFORM
+    SYSTEM_BUS.uart->flush();
+    SYSTEM_BUS.uart->set_baudrate(br);
+#else
+    fnSioCom.flush();
+    fnSystem.delay_microseconds(2000);
+    fnSioCom.set_baudrate(br);
+#endif
 }
 
 // Mount Server
@@ -418,7 +451,7 @@ void sioFuji::sio_disk_image_mount()
     // TODO: Refactor along with mount disk image.
     disk.disk_dev.host = &host;
 
-    disk.fileh = host.file_open(disk.filename, disk.filename, sizeof(disk.filename), flag);
+    disk.fileh = host.fnfile_open(disk.filename, disk.filename, sizeof(disk.filename), flag);
 
     if (disk.fileh == nullptr)
     {
@@ -478,7 +511,7 @@ int sioFuji::sio_disk_image_mount(bool siomode, int slot)
     // TODO: Refactor along with mount disk image.
     disk.disk_dev.host = &host;
 
-    disk.fileh = host.filehandler_open(disk.filename, disk.filename, sizeof(disk.filename), flag);
+    disk.fileh = host.fnfile_open(disk.filename, disk.filename, sizeof(disk.filename), flag);
 
     if (disk.fileh == nullptr)
     {
@@ -514,16 +547,14 @@ void sioFuji::sio_copy_file()
     std::string sourcePath;
     std::string destPath;
     uint8_t ck;
-#ifdef ESP_PLATFORM
-    FILE *sourceFile;
-    FILE *destFile;
-#else
-    FileHandler *sourceFile;
-    FileHandler *destFile;
-#endif
+    fnFile *sourceFile;
+    fnFile *destFile;
     char *dataBuf;
     unsigned char sourceSlot;
     unsigned char destSlot;
+#ifndef ESP_PLATFORM
+    uint64_t poll_ts = fnSystem.millis();
+#endif
 
     dataBuf = (char *)malloc(532);
 
@@ -592,11 +623,7 @@ void sioFuji::sio_copy_file()
     _fnHosts[destSlot].mount();
 
     // Open files...
-#ifdef ESP_PLATFORM
-    sourceFile = _fnHosts[sourceSlot].file_open(sourcePath.c_str(), (char *)sourcePath.c_str(), sourcePath.size() + 1, "r");
-#else
-    sourceFile = _fnHosts[sourceSlot].filehandler_open(sourcePath.c_str(), (char *)sourcePath.c_str(), sourcePath.size() + 1, "rb");
-#endif
+    sourceFile = _fnHosts[sourceSlot].fnfile_open(sourcePath.c_str(), (char *)sourcePath.c_str(), sourcePath.size() + 1, FILE_READ);
 
     if (sourceFile == nullptr)
     {
@@ -605,20 +632,12 @@ void sioFuji::sio_copy_file()
         return;
     }
 
-#ifdef ESP_PLATFORM
-    destFile = _fnHosts[destSlot].file_open(destPath.c_str(), (char *)destPath.c_str(), destPath.size() + 1, "w");
-#else
-    destFile = _fnHosts[destSlot].filehandler_open(destPath.c_str(), (char *)destPath.c_str(), destPath.size() + 1, "wb");
-#endif
+    destFile = _fnHosts[destSlot].fnfile_open(destPath.c_str(), (char *)destPath.c_str(), destPath.size() + 1, FILE_WRITE);
 
     if (destFile == nullptr)
     {
         sio_error();
-#ifdef ESP_PLATFORM
-        fclose(sourceFile);
-#else
-        sourceFile->close();
-#endif
+        fnio::fclose(sourceFile);
         free(dataBuf);
         return;
     }
@@ -630,11 +649,14 @@ void sioFuji::sio_copy_file()
     bool err = false;
     do
     {
-#ifdef ESP_PLATFORM
-        readCount = fread(dataBuf, 1, 532, sourceFile);
-#else
-        readCount = sourceFile->read(dataBuf, 1, 532);
+#ifndef ESP_PLATFORM
+        if (fnSioCom.get_sio_mode() == SioCom::sio_mode::NETSIO && fnSystem.millis() - poll_ts > 1000)
+        {
+            fnSioCom.poll(1);
+            poll_ts = fnSystem.millis();
+        }
 #endif
+        readCount = fnio::fread(dataBuf, 1, 532, sourceFile);
         readTotal += readCount;
         // Check if we got enough bytes on the read
         if (readCount < 532 && readTotal != expected)
@@ -642,11 +664,7 @@ void sioFuji::sio_copy_file()
             err = true;
             break;
         }
-#ifdef ESP_PLATFORM
-        writeCount = fwrite(dataBuf, 1, readCount, destFile);
-#else
-        writeCount = destFile->write(dataBuf, 1, readCount);
-#endif
+        writeCount = fnio::fwrite(dataBuf, 1, readCount, destFile);
         // Check if we sent enough bytes on the write
         if (writeCount != readCount)
         {
@@ -669,13 +687,8 @@ void sioFuji::sio_copy_file()
     }
 
     // copyEnd:
-#ifdef ESP_PLATFORM
-    fclose(sourceFile);
-    fclose(destFile);
-#else
-    sourceFile->close();
-    destFile->close();
-#endif
+    fnio::fclose(sourceFile);
+    fnio::fclose(destFile);
     free(dataBuf);
 }
 
@@ -692,19 +705,12 @@ int sioFuji::mount_all(bool siomode)
     {
         fujiDisk &disk = _fnDisks[i];
         fujiHost &host = _fnHosts[disk.host_slot];
-#ifdef ESP_PLATFORM
-        char flag[3] = {'r', 0, 0};
-
-        if (disk.access_mode == DISK_ACCESS_MODE_WRITE)
-            flag[1] = '+';
-#else
         char flag[4] = {'r', 'b', 0, 0};
 
         if (disk.access_mode == DISK_ACCESS_MODE_WRITE)
             flag[2] = '+';
-#endif
 
-        if (disk.host_slot != INVALID_HOST_SLOT)
+        if (disk.host_slot != INVALID_HOST_SLOT && strlen(disk.filename) > 0)
         {
             nodisks = false; // We have a disk in a slot
 
@@ -721,22 +727,17 @@ int sioFuji::mount_all(bool siomode)
             Debug_printf("Selecting '%s' from host #%u as %s on D%u:\n",
                          disk.filename, disk.host_slot, flag, i + 1);
 
-#ifdef ESP_PLATFORM
-            disk.fileh = host.file_open(disk.filename, disk.filename, sizeof(disk.filename), flag);
+            disk.fileh = host.fnfile_open(disk.filename, disk.filename, sizeof(disk.filename), flag);
 
             if (disk.fileh == nullptr)
             {
+#ifdef ESP_PLATFORM
                 sio_error();
                 return;
-            }
 #else
-            disk.fileh = host.filehandler_open(disk.filename, disk.filename, sizeof(disk.filename), flag);
-
-            if (disk.fileh == nullptr)
-            {
                 return _on_error(siomode);
-            }
 #endif
+            }
 
             // We've gotten this far, so make sure our bootable CONFIG disk is disabled
             boot_config = false;
@@ -819,6 +820,8 @@ void sioFuji::sio_open_app_key()
         return;
     }
 
+    appkey_size = get_value_or_default(mode_to_keysize,  _current_appkey.mode, 64);
+
     Debug_printf("App key creator = 0x%04hx, app = 0x%02hhx, key = 0x%02hhx, mode = %hhu, filename = \"%s\"\n",
                  _current_appkey.creator, _current_appkey.app, _current_appkey.key, _current_appkey.mode,
                  _generate_appkey_filename(&_current_appkey));
@@ -844,15 +847,14 @@ void sioFuji::sio_close_app_key()
 void sioFuji::sio_write_app_key()
 {
     uint16_t keylen = UINT16_FROM_HILOBYTES(cmdFrame.aux2, cmdFrame.aux1);
+    // std::copy(&data_buffer[0], &data_buffer[0] + keylen, data.begin());
 
     Debug_printf("Fuji cmd: WRITE APPKEY (keylen = %hu)\n", keylen);
 
-    // Data for  FUJICMD_WRITE_APPKEY
-    uint8_t value[MAX_APPKEY_LEN];
+    std::vector<uint8_t> value(appkey_size, 0);
 
-    uint8_t ck = bus_to_peripheral((uint8_t *)value, sizeof(value));
-
-    if (sio_checksum((uint8_t *)value, sizeof(value)) != ck)
+    uint8_t ck = bus_to_peripheral((uint8_t *)value.data(), value.size());
+    if (sio_checksum(value.data(), value.size()) != ck)
     {
         // apc: don't send 'E' on checksum error, 'N' was sent already
         // sio_error();
@@ -886,18 +888,14 @@ void sioFuji::sio_write_app_key()
     // Make sure we have a "/FujiNet" directory, since that's where we're putting these files
     fnSDFAT.create_path("/FujiNet");
 
-#ifdef ESP_PLATFORM
-    FILE *fOut = fnSDFAT.file_open(filename, "w");
-#else
     FILE *fOut = fnSDFAT.file_open(filename, FILE_WRITE);
-#endif
     if (fOut == nullptr)
     {
         Debug_printf("Failed to open/create output file: errno=%d\n", errno);
         sio_error();
         return;
     }
-    size_t count = fwrite(value, 1, keylen, fOut);
+    size_t count = fwrite(value.data(), 1, keylen, fOut);
     int e = errno;
 
     fclose(fOut);
@@ -911,63 +909,61 @@ void sioFuji::sio_write_app_key()
     sio_complete();
 }
 
+size_t read_file_into_vector(FILE* fIn, std::vector<uint8_t>& response_data, size_t size) {
+    response_data.resize(size + 2);
+    size_t bytes_read = fread(response_data.data() + 2, 1, size, fIn);
+
+    // Insert the size at the beginning of the vector
+    response_data[0] = static_cast<uint8_t>(bytes_read & 0xFF); // Low byte of the size
+    response_data[1] = static_cast<uint8_t>((bytes_read >> 8) & 0xFF); // High byte of the size
+    return bytes_read;
+}
+
 /*
  Read an "app key" from SD (ONLY!) storage
 */
 void sioFuji::sio_read_app_key()
 {
-
     Debug_println("Fuji cmd: READ APPKEY");
-
-    struct
-    {
-        uint16_t size;
-        uint8_t value[MAX_APPKEY_LEN];
-    } __attribute__((packed)) response;
-    memset(&response, 0, sizeof(response));
+    std::vector<uint8_t> response_data(appkey_size + 2);
 
     // Make sure we have an SD card mounted
     if (fnSDFAT.running() == false)
     {
         Debug_println("No SD mounted - can't read app key");
-        // sio_error();
-        // apc: we have to send error + dummy data after cmd was acked
-        bus_to_computer((uint8_t *)&response, sizeof(response), true);
+        bus_to_computer(response_data.data(), response_data.size(), true);
         return;
     }
 
-    // Make sure we have valid app key information
-    if (_current_appkey.creator == 0 || _current_appkey.mode != APPKEYMODE_READ)
+    // Make sure we have valid app key information, and the mode is not WRITE
+    if (_current_appkey.creator == 0 || _current_appkey.mode == APPKEYMODE_WRITE)
     {
         Debug_println("Invalid app key metadata - aborting");
-        bus_to_computer((uint8_t *)&response, sizeof(response), true);
+        bus_to_computer(response_data.data(), response_data.size(), true);
         return;
     }
 
     char *filename = _generate_appkey_filename(&_current_appkey);
-
     Debug_printf("Reading appkey from \"%s\"\n", filename);
 
-#ifdef ESP_PLATFORM
-    FILE *fIn = fnSDFAT.file_open(filename, "r");
-#else
     FILE *fIn = fnSDFAT.file_open(filename, FILE_READ);
-#endif
     if (fIn == nullptr)
     {
         Debug_printf("Failed to open input file: errno=%d\n", errno);
-        bus_to_computer((uint8_t *)&response, sizeof(response), true);
+        bus_to_computer(response_data.data(), response_data.size(), true);
         return;
     }
 
-    size_t count = fread(response.value, 1, sizeof(response.value), fIn);
-
-    fclose(fIn);
+    size_t count = read_file_into_vector(fIn, response_data, appkey_size);
     Debug_printf("Read %u bytes from input file\n", (unsigned)count);
+    fclose(fIn);
 
-    response.size = count;
+#ifdef DEBUG
+	std::string msg = util_hexdump(response_data.data(), appkey_size);
+	Debug_printf("\n%s\n", msg.c_str());
+#endif
 
-    bus_to_computer((uint8_t *)&response, sizeof(response), false);
+    bus_to_computer(response_data.data(), response_data.size(), false);
 }
 
 // DEBUG TAPE
@@ -1137,7 +1133,7 @@ void sioFuji::sio_open_directory()
     // If we already have a directory open, close it first
     if (_current_open_directory_slot != -1)
     {
-        Debug_print("Directory was already open - closign it first\n");
+        Debug_print("Directory was already open - closing it first\n");
         _fnHosts[_current_open_directory_slot].dir_close();
         _current_open_directory_slot = -1;
     }
@@ -1182,224 +1178,211 @@ void _set_additional_direntry_details(fsdir_entry_t *f, uint8_t *dest, uint8_t m
     dest[4] = modtime->tm_min;
     dest[5] = modtime->tm_sec;
 
-    // File size
-    uint16_t fsize = f->size;
-    dest[6] = LOBYTE_FROM_UINT16(fsize);
-    dest[7] = HIBYTE_FROM_UINT16(fsize);
+    // File size LITTLE ENDIAN for Atari
+    uint32_t fsize = f->size;
+    dest[6] = fsize & 0xFF;          // Least significant byte
+    dest[7] = (fsize >> 8) & 0xFF;
+    dest[8] = (fsize >> 16) & 0xFF;
+    dest[9] = (fsize >> 24) & 0xFF;  // Most significant byte
 
     // File flags
 #define FF_DIR 0x01
 #define FF_TRUNC 0x02
 
-    dest[8] = f->isDir ? FF_DIR : 0;
+    dest[10] = f->isDir ? FF_DIR : 0;
 
-    maxlen -= 10; // Adjust the max return value with the number of additional bytes we're copying
-    if (f->isDir) // Also subtract a byte for a terminating slash on directories
+    maxlen -= ADDITIONAL_DETAILS_BYTES; // Adjust the max return value with the number of additional bytes we're copying
+    if (f->isDir)                       // Also subtract a byte for a terminating slash on directories
         maxlen--;
     if (strlen(f->filename) >= maxlen)
-        dest[8] |= FF_TRUNC;
+        dest[11] |= FF_TRUNC;
 
     // File type
-    dest[9] = MediaType::discover_disktype(f->filename);
+    dest[12] = MediaType::discover_disktype(f->filename);
+
+    Debug_printf("Addtl: ");
+    for (int i = 0; i < ADDITIONAL_DETAILS_BYTES; i++)
+        Debug_printf("%02x ", dest[i]);
+    Debug_printf("\n");
 }
 
-// TODO: VERIFY THIS CODE. THE STASH SEEMED CORRUPT
+/*
+ * Read directory entries in block mode
+ * 
+ * Input parameters:
+ * aux1: Number of 256-byte pages to return (determines maximum response size)
+ * aux2: Lower 6 bits define the number of entries per page group
+ * 
+ * Response format:
+ * Overall response header:
+ * Byte  0    : 'M' (Magic number byte 1)
+ * Byte  1    : 'F' (Magic number byte 2)
+ * Byte  2    : Header size (4)
+ * Byte  3    : Number of page groups that follow
+ * 
+ * Followed by one or more complete PageGroups, padded to aux1 * 256 bytes.
+ * Each PageGroup must fit entirely within the response - partial groups are not allowed.
+ * If a PageGroup would exceed the remaining space, the directory position is rewound
+ * and that group is not included.
+ * 
+ * PageGroup structure:
+ * Byte  0    : Flags
+ *              - Bit 7: Last group (1=yes, 0=no)
+ *              - Bits 6-0: Reserved
+ * Byte  1    : Number of directory entries in this group
+ * Bytes 2-3  : Group data size (16-bit little-endian, excluding header)
+ * Byte  4    : Group index (0-based, calculated as dir_pos/group_size)
+ * Bytes 5+   : File/Directory entries for this group
+ *              Each entry:
+ *              - Bytes 0-3: Packed timestamp and flags
+ *                          - Byte 0: Years since 1970 (0-255)
+ *                          - Byte 1: FFFF MMMM (4 bits flags, 4 bits month 1-12)
+ *                                   Flags: bit 7 = directory, bits 6-4 reserved
+ *                          - Byte 2: DDDDD HHH (5 bits day 1-31, 3 high bits of hour)
+ *                          - Byte 3: HH mmmmmm (2 low bits hour 0-23, 6 bits minute 0-59)
+ *              - Bytes 4-6: File size (24-bit little-endian, 0 for directories)
+ *              - Byte  7  : Media type (0-255, with 0=unknown)
+ *              - Bytes 8+ : Null-terminated filename
+ * 
+ * The last PageGroup in the response will have its last_group flag set if:
+ * a) There are no more directory entries to process, or
+ * b) The next PageGroup would exceed the maximum response size
+ */
 void sioFuji::sio_read_directory_block()
 {
-    // aux1 holds entry size for each record
-    uint8_t maxlen = cmdFrame.aux1;
+    Debug_println("Fuji cmd: READ DIRECTORY BLOCK");
 
-    // aux2:
-    // b0-2 = number of pages - 1 (i.e. 1 to 8)
-    // b3,4 = not used
-    // b5   = extended entry information (as per normal, adds 10 bytes of information to each entry at start)
-    // b6,7 = block mode marker already checked.
+    uint8_t num_pages = cmdFrame.aux1;
+    uint8_t group_size = cmdFrame.aux2 & 0x3F; // Lower 6 bits define group size
+    size_t max_block_size = num_pages * 256;
 
-    bool is_extended = ((cmdFrame.aux2 & 0x20) == 0x20);
-    uint8_t pages = (cmdFrame.aux2 & 0x07) + 1;
+    // Debug_printf("Parameters: aux1=$%02X (pages=%d), aux2=$%02X (group_size=%d), max_block_size=%d\n",
+    //              cmdFrame.aux1, num_pages, cmdFrame.aux2, group_size, max_block_size);
 
-    Debug_printf("Fuji cmd: READ DIRECTORY BLOCK (pages=%d, maxlen=%d, extended: %d)\n", pages, maxlen, is_extended);
+#ifdef WE_NEED_TO_REWIND
+    // Save current directory position in case we need to rewind
+    uint16_t starting_pos = _fnHosts[_current_open_directory_slot].dir_tell();
+#endif /* WE_NEED_TO_REWIND */
+    // Debug_printf("Starting directory position: %d\n", starting_pos);
+    
+    std::vector<DirectoryPageGroup> page_groups;
+    size_t total_size = 0;
+    bool is_last_entry = false;
 
-    std::vector<uint8_t> response;
-    std::vector<uint8_t> start_offsets; // holds all the offsets for each dir entry in the response
-    std::vector<uint8_t> data_block;    // the data for each dir entry. no terminator char needed as we track the offsets. Double 0x7f is end of dir, and no more entries will come
+    while (!is_last_entry) {
+        // Create a new page group
+        DirectoryPageGroup group;
+        uint16_t group_start_pos = _fnHosts[_current_open_directory_slot].dir_tell();
+        
+        // Calculate group index (0-based)
+        group.index = group_start_pos / group_size;
+        
+        // Debug_printf("Starting new group at directory position: %d (index=%d)\n", 
+        //              group_start_pos, group.index);
+        
+        // Fill the group with entries
+        for (int i = 0; i < group_size && !is_last_entry; i++) {
+            fsdir_entry_t *f = _fnHosts[_current_open_directory_slot].dir_nextfile();
+            
+            if (f == nullptr) {
+                // Debug_println("Reached end of directory");
+                is_last_entry = true;
+                group.is_last_group = true;
+                break;
+            }
 
-    uint16_t response_max = pages * 256;
+            // Debug_printf("Adding entry %d: \"%s\" (size=%lu)\n", 
+            //             i, f->filename, f->size);
+            
+            if (!group.add_entry(f)) {
+                // Debug_println("Failed to add entry to group");
+                break;
+            }
+        }
 
-    if (_current_open_directory_slot == -1)
-    {
-        Debug_print("No currently open directory\n");
+        // If this is the last group, mark its last entry as the last one
+        if (is_last_entry) {
+            Debug_println("This is the last group in the directory");
+            group.is_last_group = true;
+        }
+
+        // this sets all the data for the group up correctly for us to insert into the block
+        group.finalize();
+
+        // Check if adding this group would exceed max_block_size
+        size_t new_total = total_size + group.data.size();
+        // Debug_printf("Group stats: entries=%d, size=%d, new_total=%d/%d\n",
+        //             group.entry_count, group.data.size(), new_total, max_block_size);
+        
+        if (new_total > max_block_size) {
+            // Debug_printf("Group would exceed max_block_size (%d > %d), rewinding to pos %d\n",
+            //            new_total, max_block_size, group_start_pos);
+            // Rewind to start of this group and break
+            _fnHosts[_current_open_directory_slot].dir_seek(group_start_pos);
+            break;
+        }
+        
+        // Add group to our collection
+        total_size = new_total;
+        page_groups.push_back(std::move(group));
+        // Debug_printf("Added group %d, total_size now %d\n", 
+        //             page_groups.size(), total_size);
+    }
+
+    // If we couldn't fit any groups, return error
+    if (page_groups.empty()) {
+        Debug_println("No page groups fit in requested size");
+        Debug_printf("Final stats: total_size=%d, max_block_size=%d\n",
+                    total_size, max_block_size);
         sio_error();
         return;
     }
 
-    bool is_eod = false;
-    char current_entry[256];
-    uint16_t num_entries = 0;
-    uint16_t total_size = 9; // header bytes
+    // Create final response buffer
+    std::vector<uint8_t> response(max_block_size, 0);  // Initialize with zeros at full size
 
-    uint16_t initial_pos = _fnHosts[_current_open_directory_slot].dir_tell();
+    // Add response header
+    response[0] = 'M';  // Magic byte 1
+    response[1] = 'F';  // Magic byte 2
+    response[2] = 4;    // Header size (magic + size + count)
+    response[3] = page_groups.size(); // Number of page groups that follow
 
-    // keep filling buffers up until it can't fit another maxlen (plus header bytes etc)
-    // or we hit end of dir
-    while ( !is_eod && num_entries < 256 )
-    {
-        uint16_t additional_size = 0;
-        uint16_t pos_before_next = _fnHosts[_current_open_directory_slot].dir_tell();
-        fsdir_entry_t *f = _fnHosts[_current_open_directory_slot].dir_nextfile();
-        if (f == nullptr)
-        {
-            // reached end of dir
-            is_eod = true;
-            current_entry[0] = 0x7F;
-            current_entry[1] = 0x7F;
-            current_entry[2] = 0;
-            additional_size = 2;
+    // Copy all page groups to response
+    size_t current_pos = 4;  // Start after header
+    for (const auto& group : page_groups) {
+        if (current_pos + group.data.size() <= max_block_size) {
+            std::copy(group.data.begin(), group.data.end(), response.begin() + current_pos);
+            current_pos += group.data.size();
         }
-        else
-        {
-            Debug_printf("::read_direntry \"%s\"\n", f->filename);
-
-            int bufsize;
-            char *filenamedest = current_entry;
-
-            // If 0x80 is set on AUX2, send back additional information
-            if (is_extended)
-            {
-                _set_additional_direntry_details(f, (uint8_t *)current_entry, maxlen);
-                // Adjust remaining size of buffer and file path destination
-                bufsize = sizeof(current_entry) - ADDITIONAL_DETAILS_BYTES;
-                filenamedest = current_entry + ADDITIONAL_DETAILS_BYTES;
-            }
-            else
-            {
-                bufsize = maxlen;
-            }
-
-            int filelen = util_ellipsize(f->filename, filenamedest, bufsize);
-            additional_size = filelen + (is_extended ? ADDITIONAL_DETAILS_BYTES : 0);
-
-            // Add a slash at the end of directory entries
-            if (f->isDir && filelen < (bufsize - 2))
-            {
-                current_entry[filelen] = '/';
-                current_entry[filelen + 1] = '\0';
-                additional_size++;
-            }
-
-        }
-
-        // would this take us over the limit? 2 for start_offset bytes.
-        uint16_t new_size = total_size + 2 + additional_size;
-
-        if (new_size > response_max) {
-            Debug_printf("skipping add, would have taken us to %d size. additional was: %d\n", new_size, additional_size);
-            // reset to previous pos, and exit loop
-            _fnHosts[_current_open_directory_slot].dir_seek(pos_before_next);
-            break;
-        } else {
-            Debug_printf("adding additional entry with size: %d\n", additional_size);
-        }
-
-
-        start_offsets.push_back(static_cast<uint8_t>(data_block.size() & 0xFF)); // lo byte of current size (which is same as offset)
-        start_offsets.push_back(static_cast<uint8_t>((data_block.size() >> 8) & 0xFF)); // high byte
-
-        // add the string to the data block without the terminating null
-        if (is_extended)
-        {
-            // strlen doesn't work as we have prepended some additional information
-            // add the additional bytes first
-            for(int i=0; i < ADDITIONAL_DETAILS_BYTES; i++)
-            {
-                data_block.push_back(static_cast<uint8_t>(current_entry[i]));
-            }
-            // Then add the string part
-            //int s_len = std::strlen(current_entry + ADDITIONAL_DETAILS_BYTES);
-            data_block.insert(data_block.end(), current_entry + ADDITIONAL_DETAILS_BYTES, current_entry + ADDITIONAL_DETAILS_BYTES + std::strlen(current_entry + ADDITIONAL_DETAILS_BYTES));
-        } else {
-            data_block.insert(data_block.end(), current_entry, current_entry + std::strlen(current_entry));
-        }
-
-        total_size = 9 + data_block.size() + start_offsets.size();
-        Debug_printf("current sizes, data: %d, offsets: %d, total: %d\n", data_block.size(), start_offsets.size(), data_block.size() + start_offsets.size());
-
-
-        num_entries++;
     }
 
-    // ###################################################################
-    // CREATE THE RESPONSE BLOCK:
-    // ###################################################################
-    // byte 0-1 = "MF" (Multi-File, take your pick :D )
-    // byte 2   = Flags (currently 0x80 = Extended Information)
-    // byte 3   = Max Size Per Entry (maxlen from input)
-    // byte 4   = Num Entries in block (max 255)
-    // byte 5-6 = Total size of block (i.e. size without padding)
-    // byte 7-8 = First Position in block (i.e. dir pos value at start), allows up to 64k entries over all blocks
-    // Num Entries x 2 = Offsets in Data for each entry
-    // Data x Num Entries = data for each dir.
-    //
-    // All above is < pages x 256 in size
+    // Debug_printf("Directory block stats:\n");
+    // Debug_printf("  Number of groups: %d\n", page_groups.size());
+    // Debug_printf("  Total data size: %d bytes\n", total_size);
+    // Debug_printf("  Last group: %s\n", (page_groups.back().is_last_group ? "Yes" : "No"));
+    // Debug_printf("Full response block:\n%s\n", util_hexdump(response.data(), response.size()).c_str());
 
-    // HEADER BYTES
-    std::string headerBytes = "MF";
-    response.insert(response.end(), headerBytes.begin(), headerBytes.end());
-
-    // FLAGS
-    uint8_t header_flags = is_extended ? 0x80 : 0;  // more flags may come
-    response.push_back(header_flags);
-
-    // MAX SIZE PER ENTRY
-    response.push_back(maxlen);
-
-    // NUM ENTRIES
-    response.push_back(static_cast<uint8_t>(num_entries));
-
-    // Total size
-    int final_size = 9 + data_block.size() + start_offsets.size();
-    response.push_back(static_cast<uint8_t>(final_size & 0xFF));
-    response.push_back(static_cast<uint8_t>((final_size >> 8) & 0xFF));
-
-    // INITIAL POS VALUE
-    response.push_back(static_cast<uint8_t>(initial_pos & 0xFF));
-    response.push_back(static_cast<uint8_t>((initial_pos >> 8) & 0xFF));
-
-    // OFFSETS
-    response.insert(response.end(), start_offsets.begin(), start_offsets.end());
-
-    // DATA
-    response.insert(response.end(), data_block.begin(), data_block.end());
-
-    Debug_printf("Actual data size: %d to atari\n", response.size());
-    char *s = util_hexdump(response.data(), response.size());
-    Debug_printf("dump: \n%s\n", s);
-    free(s);
-
-    // buffer with 0s to requested size
-    response.resize(response_max, 0);
-
-    bus_to_computer(response.data(), response_max, false);
+    bus_to_computer(response.data(), response.size(), false);
 }
 
 void sioFuji::sio_read_directory_entry()
 {
-     if ((cmdFrame.aux2 & 0xC0) == 0xC0) {
-        // Block mode directory entry
+    // Make sure we have a current open directory
+    if (_current_open_directory_slot == -1)
+    {
+        Debug_print("READ DIRECTORY ENTRY: No currently open directory\n");
+        sio_error();
+        return;
+    }
+    
+    // detect block mode in request
+    if ((cmdFrame.aux2 & 0xC0) == 0xC0) {
         sio_read_directory_block();
         return;
     }
 
     uint8_t maxlen = cmdFrame.aux1;
     Debug_printf("Fuji cmd: READ DIRECTORY ENTRY (max=%hu)\n", maxlen);
-
-    // Make sure we have a current open directory
-    if (_current_open_directory_slot == -1)
-    {
-        Debug_print("No currently open directory\n");
-        sio_error();
-        return;
-    }
 
     char current_entry[256];
 
@@ -1541,6 +1524,7 @@ void sioFuji::sio_get_adapter_config_extended()
 // Get network adapter configuration
 void sioFuji::sio_get_adapter_config()
 {
+    // THIS IS STILL NEEDED FOR BACKWARDS COMPATIBILITY WITH FUJINET-LIB THAT SENDS 0xE8 FOR ADAPTER_CONFIG_EXTENDED WITH 0x01 IN THE AUX1 BYTE
     Debug_printf("Fuji cmd: GET ADAPTER CONFIG (aux1:%hu)\r\n", cmdFrame.aux1);
     if (cmdFrame.aux1 == 1)
     {
@@ -1618,11 +1602,7 @@ void sioFuji::sio_new_disk()
         return;
     }
 
-#ifdef ESP_PLATFORM
-    disk.fileh = host.file_open(disk.filename, disk.filename, sizeof(disk.filename), "w");
-#else
-    disk.fileh = host.filehandler_open(disk.filename, disk.filename, sizeof(disk.filename), FILE_WRITE);
-#endif
+    disk.fileh = host.fnfile_open(disk.filename, disk.filename, sizeof(disk.filename), FILE_WRITE);
     if (disk.fileh == nullptr)
     {
         Debug_printf("sio_new_disk Couldn't open file for writing: \"%s\"\n", disk.filename);
@@ -1631,11 +1611,7 @@ void sioFuji::sio_new_disk()
     }
 
     bool ok = disk.disk_dev.write_blank(disk.fileh, newDisk.sectorSize, newDisk.numSectors);
-#ifdef ESP_PLATFORM
-    fclose(disk.fileh);
-#else
-    disk.fileh->close();
-#endif
+    fnio::fclose(disk.fileh);
 
     if (ok == false)
     {
@@ -1957,14 +1933,14 @@ void sioFuji::sio_set_device_filename()
     char tmp[MAX_FILENAME_LEN];
 
     // AUX1 is the desired device slot
-    uint8_t slot = cmdFrame.aux1;
+    uint8_t deviceSlot = cmdFrame.aux1;
     // AUX2 contains the host slot and the mount mode (READ/WRITE)
     uint8_t host = cmdFrame.aux2 >> 4;
     uint8_t mode = cmdFrame.aux2 & 0x0F;
 
     uint8_t ck = bus_to_peripheral((uint8_t *)tmp, MAX_FILENAME_LEN);
 
-    Debug_printf("Fuji cmd: SET DEVICE SLOT 0x%02X/%02X/%02X FILENAME: %s\n", slot, host, mode, tmp);
+    Debug_printf("Fuji cmd: SET DEVICE SLOT 0x%02X/%02X/%02X FILENAME: %s\n", deviceSlot, host, mode, tmp);
 
     if (sio_checksum((uint8_t *)tmp, MAX_FILENAME_LEN) != ck)
     {
@@ -1973,11 +1949,16 @@ void sioFuji::sio_set_device_filename()
     }
 
     // Handle DISK slots
-    if (slot < MAX_DISK_DEVICES)
+    if (deviceSlot < MAX_DISK_DEVICES)
     {
-        memcpy(_fnDisks[cmdFrame.aux1].filename, tmp, MAX_FILENAME_LEN);
-        _fnDisks[cmdFrame.aux1].host_slot = host;
-        _fnDisks[cmdFrame.aux1].access_mode = mode;
+        memcpy(_fnDisks[deviceSlot].filename, tmp, MAX_FILENAME_LEN);
+        // If the filename is empty, mark this as an invalid host, so that mounting will ignore it too
+        if (strlen(_fnDisks[deviceSlot].filename) == 0) {
+            _fnDisks[deviceSlot].host_slot = INVALID_HOST_SLOT;
+        } else {
+            _fnDisks[deviceSlot].host_slot = host;
+        }
+        _fnDisks[deviceSlot].access_mode = mode;
         _populate_config_from_slots();
     }
     // Handle TAPE slots
@@ -2042,10 +2023,11 @@ void sioFuji::insert_boot_device(uint8_t d)
 {
     const char *config_atr = "/autorun.atr";
     std::string altconfigfile = Config.get_config_filename();
+    bool config_ng = Config.get_general_config_ng();
     const char *alt_config_atr = altconfigfile.c_str();
     const char *mount_all_atr = "/mount-and-boot.atr";
 #ifdef ESP_PLATFORM // TODO merge
-    FILE *fBoot;
+    fnFile *fBoot;
 
     _bootDisk.unmount();
 
@@ -2054,7 +2036,7 @@ void sioFuji::insert_boot_device(uint8_t d)
     case 0:
         if( !altconfigfile.empty() && fnSDFAT.running() != false )
         {
-            fBoot = fnSDFAT.file_open(alt_config_atr, "r");
+            fBoot = fnSDFAT.fnfile_open(alt_config_atr);
             // if open fails, fall back to default config
             if (fBoot != nullptr)
             {
@@ -2063,11 +2045,16 @@ void sioFuji::insert_boot_device(uint8_t d)
                 break;
             }
         }
-        fBoot = fsFlash.file_open(config_atr);
+        else if (config_ng)
+        {
+            config_atr = "/autorun-cng.atr";
+            Debug_printf("Mounted CONFIG-NG\n");
+        }
+        fBoot = fsFlash.fnfile_open(config_atr);
         _bootDisk.mount(fBoot, config_atr, 0);
         break;
     case 1:
-        fBoot = fsFlash.file_open(mount_all_atr);
+        fBoot = fsFlash.fnfile_open(mount_all_atr);
         _bootDisk.mount(fBoot, mount_all_atr, 0);
         break;
     case 2:
@@ -2075,7 +2062,7 @@ void sioFuji::insert_boot_device(uint8_t d)
         if (fnTNFS.start("tnfs.fujinet.online"))
         {
             Debug_printf("opening lobby.\n");
-            fBoot = fnTNFS.file_open("/ATARI/_lobby.xex");
+            fBoot = fnTNFS.fnfile_open("/ATARI/_lobby.xex");
             _bootDisk.mount(fBoot, "/ATARI/_lobby.xex", 0);
         }
         break;
@@ -2085,7 +2072,7 @@ void sioFuji::insert_boot_device(uint8_t d)
     const char *lobby_xex = "/ATARI/_lobby.xex";
     const char *boot_img;
 
-    FileHandler *fBoot = nullptr;
+    fnFile *fBoot = nullptr;
 
     _bootDisk.unmount();
 
@@ -2094,7 +2081,7 @@ void sioFuji::insert_boot_device(uint8_t d)
     case 0:
         if( !altconfigfile.empty() && fnSDFAT.running() != false )
         {
-            fBoot = fnSDFAT.filehandler_open(alt_config_atr);
+            fBoot = fnSDFAT.fnfile_open(alt_config_atr);
             // if open fails, fall back to default config
             if (fBoot != nullptr)
             {
@@ -2103,12 +2090,17 @@ void sioFuji::insert_boot_device(uint8_t d)
                 break;
             }
         }
+        else if (config_ng)
+        {
+            config_atr = "/autorun-cng.atr";
+            Debug_printf("Mounted CONFIG-NG\n");
+        }
         boot_img = config_atr;
-        fBoot = fsFlash.filehandler_open(boot_img);
+        fBoot = fsFlash.fnfile_open(boot_img);
         break;
     case 1:
         boot_img = mount_all_atr;
-        fBoot = fsFlash.filehandler_open(boot_img);
+        fBoot = fsFlash.fnfile_open(boot_img);
         break;
     case 2:
         Debug_printf("Mounting lobby server\n");
@@ -2116,7 +2108,7 @@ void sioFuji::insert_boot_device(uint8_t d)
         {
             Debug_printf("opening lobby.\n");
             boot_img = lobby_xex;
-            fBoot = fnTNFS.filehandler_open(boot_img);
+            fBoot = fnTNFS.fnfile_open(boot_img);
         }
         break;
     default:
@@ -2186,7 +2178,7 @@ void sioFuji::setup(systemBus *siobus)
         _sio_bus->addDevice(&_fnDisks[i].disk_dev, SIO_DEVICEID_DISK + i);
 
     for (int i = 0; i < MAX_NETWORK_DEVICES; i++)
-        _sio_bus->addDevice(&sioNetDevs[i], SIO_DEVICEID_FN_NETWORK + i);
+        _sio_bus->addDevice(sioNetDevs[i].get(), SIO_DEVICEID_FN_NETWORK + i);
 
     _sio_bus->addDevice(&_cassetteDev, SIO_DEVICEID_CASSETTE);
     cassette()->set_buttons(Config.get_cassette_buttons());
@@ -2197,6 +2189,138 @@ sioDisk *sioFuji::bootdisk()
 {
     return &_bootDisk;
 }
+
+
+void sioFuji::sio_qrcode_input()
+{
+    uint16_t len = sio_get_aux();
+
+    Debug_printf("FUJI: QRCODE INPUT (len: %d)\n", len);
+
+    if (!len)
+    {
+        Debug_printf("Invalid length. Aborting");
+        sio_error();
+        return;
+    }
+
+    std::vector<unsigned char> p(len);
+    bus_to_peripheral(p.data(), len);
+    qrManager.in_buf += std::string((const char *)p.data(), len);
+    sio_complete();
+}
+
+void sioFuji::sio_qrcode_encode()
+{
+    size_t out_len = 0;
+
+    qrManager.output_mode = 0;
+    uint16_t aux = sio_get_aux();
+    qrManager.version = aux & 0b01111111;
+    qrManager.ecc_mode = (aux >> 8) & 0b00000011;
+    bool shorten = (aux >> 12) & 0b00000001;
+
+    Debug_printf("FUJI: QRCODE ENCODE\n");
+    Debug_printf("QR Version: %d, ECC: %d, Shorten: %s\n", qrManager.version, qrManager.ecc_mode, shorten ? "Y" : "N");
+
+    std::string url = qrManager.in_buf;
+
+    if (shorten) {
+        url = fnHTTPD.shorten_url(url);
+    }
+
+    std::vector<uint8_t> p = QRManager::encode(
+        url.c_str(),
+        url.size(),
+        qrManager.version,
+        qrManager.ecc_mode,
+        &out_len
+    );
+
+    qrManager.in_buf.clear();
+
+    if (!out_len)
+    {
+        Debug_printf("QR code encoding failed\n");
+        sio_error();
+        return;
+    }
+
+    Debug_printf("Resulting QR code is: %u modules\n", out_len);
+    sio_complete();
+}
+
+void sioFuji::sio_qrcode_length()
+{
+    Debug_printf("FUJI: QRCODE LENGTH\n");
+    uint8_t output_mode = sio_get_aux();
+    Debug_printf("Output mode: %i\n", output_mode);
+
+    size_t len = qrManager.out_buf.size();
+
+    // A bit gross to have a side effect from length command, but not enough aux bytes
+    // to specify version, ecc, *and* output mode for the encode command. Also can't
+    // just wait for output command, because output mode determines buffer length,
+    if (len && (output_mode != qrManager.output_mode)) {
+        if (output_mode == QR_OUTPUT_MODE_BINARY) {
+            qrManager.to_binary();
+        }
+        else if (output_mode == QR_OUTPUT_MODE_ATASCII) {
+            qrManager.to_atascii();
+        }
+        else if (output_mode == QR_OUTPUT_MODE_BITMAP) {
+            qrManager.to_bitmap();
+        }
+        qrManager.output_mode = output_mode;
+        len = qrManager.out_buf.size();
+    }
+
+    uint8_t response[4] = {
+        (uint8_t)(len >> 0),
+        (uint8_t)(len >> 8),
+        (uint8_t)(len >> 16),
+        (uint8_t)(len >> 24)
+    };
+
+    if (!len)
+    {
+        Debug_printf("QR code buffer is 0 bytes, sending error.\n");
+        bus_to_computer(response, sizeof(response), true);
+    }
+
+    Debug_printf("QR code buffer length: %u bytes\n", len);
+
+    bus_to_computer(response, sizeof(response), false);
+}
+
+void sioFuji::sio_qrcode_output()
+{
+    Debug_printf("FUJI: QRCODE OUTPUT\n");
+
+    size_t len = sio_get_aux();
+
+    if (!len)
+    {
+        Debug_printf("Refusing to send a zero byte buffer. Aborting\n");
+        return;
+    }
+    else if (len > qrManager.out_buf.size())
+    {
+        Debug_printf("Requested %u bytes, but buffer is only %u bytes, aborting.\n", len, qrManager.out_buf.size());
+        return;
+    }
+    else
+    {
+        Debug_printf("Requested %u bytes\n", len);
+    }
+
+    bus_to_computer(&qrManager.out_buf[0], len, false);
+
+    qrManager.out_buf.erase(qrManager.out_buf.begin(), qrManager.out_buf.begin()+len);
+    qrManager.out_buf.shrink_to_fit();
+
+}
+
 
 void sioFuji::sio_base64_encode_input()
 {
@@ -2288,6 +2412,12 @@ void sioFuji::sio_base64_encode_output()
     base64.base64_buffer.shrink_to_fit();
 
     bus_to_computer(p.data(), len, false);
+}
+
+void sioFuji::sio_random_number()
+{
+    int r = rand();
+    bus_to_computer((uint8_t *)&r,sizeof(int),true);
 }
 
 void sioFuji::sio_base64_decode_input()
@@ -2386,10 +2516,8 @@ void sioFuji::sio_base64_decode_output()
 
 void sioFuji::sio_hash_input()
 {
-    uint16_t len = sio_get_aux();
-
     Debug_printf("FUJI: HASH INPUT\n");
-
+    uint16_t len = sio_get_aux();
     if (!len)
     {
         Debug_printf("Invalid length. Aborting");
@@ -2399,60 +2527,46 @@ void sioFuji::sio_hash_input()
 
     std::vector<unsigned char> p(len);
     bus_to_peripheral(p.data(), len);
-    base64.base64_buffer += std::string((const char *)p.data(), len);
-
+    hasher.add_data(p);
     sio_complete();
 }
 
-void sioFuji::sio_hash_compute()
+void sioFuji::sio_hash_compute(bool clear_data)
 {
-    uint16_t m = hash_mode = sio_get_aux();
-
     Debug_printf("FUJI: HASH COMPUTE\n");
-
-    hasher.compute(m, base64.base64_buffer);
-    base64.base64_buffer.clear();
-    base64.base64_buffer.shrink_to_fit();
-
+    algorithm = Hash::to_algorithm(sio_get_aux());
+    hasher.compute(algorithm, clear_data);
     sio_complete();
 }
 
 void sioFuji::sio_hash_length()
 {
-    unsigned char r = 0;
-    uint16_t m = sio_get_aux();
-
-    switch (hash_mode)
-    {
-    case 0: // MD5
-        r = 16;
-        break;
-    case 1: // SHA1
-        r = 20;
-        break;
-    case 2: // SHA256
-        r = 32;
-        break;
-    case 3: // SHA512
-        r = 64;
-        break;
-    }
-
-    if (m == 1)  // Hex output
-        m <<= 1; // double it.
-
+    Debug_printf("FUJI: HASH LENGTH\n");
+    uint16_t is_hex = sio_get_aux() == 1;
+    uint8_t r = hasher.hash_length(algorithm, is_hex);
     bus_to_computer((uint8_t *)&r, 1, false);
 }
 
 void sioFuji::sio_hash_output()
 {
-    uint16_t olen = 0;
-    uint16_t m = sio_get_aux();
-
     Debug_printf("FUJI: HASH OUTPUT\n");
+    uint16_t is_hex = sio_get_aux() == 1;
 
-    std::vector<uint8_t> o = hasher.hash_output(m, hash_mode, olen);
-    bus_to_computer(o.data(), olen, false);
+    std::vector<uint8_t> hashed_data;
+    if (is_hex) {
+        std::string hex = hasher.output_hex();
+        hashed_data.insert(hashed_data.end(), hex.begin(), hex.end());
+    } else {
+        hashed_data = hasher.output_binary();
+    }
+    bus_to_computer(hashed_data.data(), hashed_data.size(), false);
+}
+
+void sioFuji::sio_hash_clear()
+{
+    Debug_printf("FUJI: HASH CLEAR\n");
+    hasher.clear();
+    sio_complete();
 }
 
 void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
@@ -2548,6 +2662,10 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_ack();
         sio_net_get_wifi_enabled();
         break;
+    case FUJICMD_SET_BAUDRATE:
+        sio_ack();
+        sio_set_baudrate();
+        break;
     case FUJICMD_UNMOUNT_IMAGE:
         sio_ack();
         sio_disk_image_umount();
@@ -2555,6 +2673,10 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
     case FUJICMD_GET_ADAPTERCONFIG:
         sio_ack();
         sio_get_adapter_config();
+        break;
+    case FUJICMD_GET_ADAPTERCONFIG_EXTENDED:
+        sio_ack();
+        sio_get_adapter_config_extended();
         break;
     case FUJICMD_NEW_DISK:
         sio_late_ack();
@@ -2620,6 +2742,22 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         sio_late_ack();
         sio_enable_udpstream();
         break;
+    case FUJICMD_QRCODE_INPUT:
+        sio_ack();
+        sio_qrcode_input();
+        break;
+    case FUJICMD_QRCODE_ENCODE:
+        sio_ack();
+        sio_qrcode_encode();
+        break;
+    case FUJICMD_QRCODE_LENGTH:
+        sio_ack();
+        sio_qrcode_length();
+        break;
+    case FUJICMD_QRCODE_OUTPUT:
+        sio_ack();
+        sio_qrcode_output();
+        break;
     case FUJICMD_BASE64_ENCODE_INPUT:
         sio_late_ack();
         sio_base64_encode_input();
@@ -2658,7 +2796,11 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
         break;
     case FUJICMD_HASH_COMPUTE:
         sio_ack();
-        sio_hash_compute();
+        sio_hash_compute(true);
+        break;
+    case FUJICMD_HASH_COMPUTE_NO_CLEAR:
+        sio_ack();
+        sio_hash_compute(false);
         break;
     case FUJICMD_HASH_LENGTH:
         sio_ack();
@@ -2667,6 +2809,14 @@ void sioFuji::sio_process(uint32_t commanddata, uint8_t checksum)
     case FUJICMD_HASH_OUTPUT:
         sio_ack();
         sio_hash_output();
+        break;
+    case FUJICMD_HASH_CLEAR:
+        sio_ack();
+        sio_hash_clear();
+        break;
+    case FUJICMD_RANDOM_NUMBER:
+        sio_ack();
+        sio_random_number();
         break;
     default:
         sio_nak();
@@ -2681,6 +2831,13 @@ int sioFuji::get_disk_id(int drive_slot)
 std::string sioFuji::get_host_prefix(int host_slot)
 {
     return _fnHosts[host_slot].get_prefix();
+}
+
+fujiHost *sioFuji::set_slot_hostname(int host_slot, char *hostname)
+{
+    _fnHosts[host_slot].set_hostname(hostname);
+    _populate_config_from_slots();
+    return &_fnHosts[host_slot];
 }
 
 #endif /* BUILD_ATARI */

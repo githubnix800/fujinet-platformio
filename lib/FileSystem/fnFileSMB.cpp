@@ -1,4 +1,3 @@
-#ifndef ESP_PLATFORM
 
 #include <errno.h>
 
@@ -45,7 +44,7 @@ int FileHandlerSMB::seek(long int off, int whence)
         Debug_printf("%s\n", smb2_get_error(_smb));
         return -1;
     }
-    Debug_printf("new pos is %lu\n", new_pos);
+    Debug_printf("new pos is %llu\n", new_pos);
     return 0;
 }
 
@@ -140,5 +139,3 @@ int FileHandlerSMB::flush()
     }
     return 0;
 }
-
-#endif // !ESP_PLATFORM

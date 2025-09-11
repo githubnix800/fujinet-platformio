@@ -1,3 +1,20 @@
+// Meatloaf - A Commodore 64/128 multi-device emulator
+// https://github.com/idolpx/meatloaf
+// Copyright(C) 2020 James Johnston
+//
+// Meatloaf is free software : you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// Meatloaf is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Meatloaf. If not, see <http://www.gnu.org/licenses/>.
+
 #include "string_utils.h"
 
 #include <algorithm>
@@ -6,6 +23,9 @@
 #include <cmath>
 #include <sstream>
 #include <iomanip>
+#include <mbedtls/version.h>
+#include <mbedtls/sha1.h>
+#include <mbedtls/base64.h>
 
 //#include "../../include/petscii.h"
 #include "../../include/debug.h"
@@ -40,6 +60,11 @@ namespace mstr {
     // trim from end (in place)
     void rtrim(std::string &s)
     {
+        // CR
+        s.erase(
+            std::find_if(s.rbegin(), s.rend(), [](int ch) { return (ch != 0x0D); }).base(), s.end());
+        
+        // SPACE
         s.erase(
             std::find_if(s.rbegin(), s.rend(), [](int ch) { return !std::isspace(ch); }).base(), s.end());
     }
@@ -62,6 +87,31 @@ namespace mstr {
         return ch == '\xA0' || std::isspace(ch);
     }
 
+    // is OSX/Windows junk system file
+    bool isJunk(std::string &s)
+    {
+        std::vector<std::string> names = {
+            // OSX
+            "/._",
+            "/.DS_Store",
+            "/.fseventsd",
+            "/.Spotlight-V",
+            "/.TemporaryItems",
+            "/.Trashes",
+            "/.VolumeIcon.icns",
+
+            // Windows
+            "/Desktop.ini",
+            "/Thumbs.ini"
+        };
+
+        for (auto it = begin (names); it != end (names); ++it) {
+            if (contains(s, it->c_str()))
+                return true;
+        }
+        
+        return false;
+    }
 
 
     std::string drop(std::string str, size_t count) {
@@ -112,7 +162,7 @@ namespace mstr {
     /*
     * String Comparision
     */
-    bool compare_char(char &c1, char &c2)
+    bool compare_char(const char &c1, const char &c2)
     {
         if (c1 == c2)
             return true;
@@ -120,7 +170,7 @@ namespace mstr {
         return false;
     }
 
-    bool compare_char_insensitive(char &c1, char &c2)
+    bool compare_char_insensitive(const char &c1, const char &c2)
     {
         if (c1 == c2)
             return true;
@@ -159,7 +209,7 @@ namespace mstr {
     }
 
 
-    bool equals(std::string &s1, char *s2, bool case_sensitive)
+    bool equals(std::string &s1, const char *s2, bool case_sensitive)
     {
         if(case_sensitive)
             return ( (s1.size() == strlen(s2) ) &&
@@ -179,6 +229,12 @@ namespace mstr {
             it = ( std::search(s1.begin(), s1.end(), sn.begin(), sn.end(), &compare_char_insensitive) );
 
         return ( it != s1.end() );
+    }
+
+    bool contains(const char *s1, const char *s2, bool case_sensitive)
+    {
+        std::string ss1 = s1;
+        return contains(ss1, s2, case_sensitive);
     }
 
     bool compare(std::string &s1, std::string &s2, bool case_sensitive)
@@ -241,9 +297,9 @@ namespace mstr {
         for(char petscii : petsciiInput) {
             if(petscii > 0)
             {
-            U8Char u8char(petscii);
-            utf8string+=u8char.toUtf8();
-        }
+                U8Char u8char(petscii);
+                utf8string+=u8char.toUtf8();
+            }
         }
         return utf8string;
     }
@@ -264,17 +320,30 @@ namespace mstr {
         return petsciiString;
     }
 
-    // convert string to hex
-    std::string toHex(const char *input, size_t size)
+    // convert bytes to hex
+    std::string toHex(const uint8_t *input, size_t size)
     {
         std::stringstream ss;
         for(int i=0; i<size; ++i)
             ss << std::uppercase << std::setfill('0') << std::setw(2) << std::hex << (int)input[i];
         return ss.str();
     }
+    // convert string to hex
     std::string toHex(const std::string &input)
     {
-        return toHex(input.c_str(), input.size());
+        return toHex((const uint8_t *)input.c_str(), input.size());
+    }
+
+    // convert hex char to it's integer value
+    char fromHex(char ch)
+    {
+        return isdigit(ch) ? ch - '0' : tolower(ch) - 'a' + 10;
+    }
+
+    bool isHex(std::string &s)
+    {
+        return std::all_of(s.begin(), s.end(), 
+                        [](unsigned char c) { return ::isxdigit(c); });
     }
 
     // convert to A0 space to 20 space (in place)
@@ -313,6 +382,12 @@ namespace mstr {
     {
         return std::all_of(s.begin(), s.end(), 
                         [](unsigned char c) { return ::isdigit(c); });
+    }
+
+    bool isNumeric(char *s)
+    {
+        std::string s2 = s;
+        return isNumeric(s2);
     }
 
     void replaceAll(std::string &s, const std::string &search, const std::string &replace) 
@@ -381,7 +456,11 @@ namespace mstr {
         }
         //Debug_printv("res[%s] length[%d] size[%d]", res.c_str(), res.length(), res.size());
 
-        return res.erase(res.length()-1,1);
+        //Debug_printv("res[%s] length[%d] size[%d]", res.c_str(), res.length(), res.size());
+        if ( res.length() > 1)
+            res.erase(res.length()-1);
+
+        return res;
     }
 
     std::string joinToString(std::vector<std::string> strings, std::string separator) {
@@ -400,8 +479,16 @@ namespace mstr {
         {
             std::string::value_type c = (*i);
 
+            // Change space to '+'
+            // if ( c == ' ')
+            // {
+            //     escaped << '+';
+            //     continue;
+            // }
+
             // Keep alphanumeric and other accepted characters intact
-            if (isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~' || c == '/' || c == ' ')
+            //if (isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~' || c == '/' || c == ' ')
+            if (isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~' || c == '/' || c == '+')
             {
                 escaped << c;
                 continue;
@@ -416,30 +503,86 @@ namespace mstr {
         return escaped.str();
     }
 
-    std::string urlDecode(std::string s){
-        std::string ret;
+    void urlDecode(char *s, size_t size, bool alter_pluses)
+    {
         char ch;
-        int i, ii, len = s.length();
+        int i = 0, ii = 0;
 
-        for (i = 0; i < len; i++)
-        {
-            if (s[i] != '%')
+        while (s[i] != '\0' && i < size) {
+            if (alter_pluses && s[i] == '+')
             {
-                if (s[i] == '+')
-                    ret += ' ';
-                else
-                    ret += s[i];
+                s[ii++] = ' ';
+                i++;
+            } 
+            else if ((s[i] == '%') && 
+                    isxdigit(s[i + 1]) && 
+                    isxdigit(s[i + 2]) &&
+                    (i + 2 < size))
+            {
+                ch = fromHex(s[i + 1]) << 4 | fromHex(s[i + 2]);
+                s[ii++] = ch;
+                i += 3; // Skip past the percent encoding.
             }
             else
             {
-                sscanf(s.substr(i + 1, 2).c_str(), "%x", &ii);
-                ch = static_cast<char>(ii);
-                ret += ch;
-                i += 2;
+                s[ii++] = s[i++];
             }
         }
+        s[ii] = '\0'; // Null-terminate the decoded string.
+    }
 
-        return ret;
+    void urlDecode(char *s, size_t size)
+    {
+        urlDecode(s, size, true);
+    }
+
+    std::string urlDecode(const std::string& s, bool alter_pluses)
+    {
+        if (s.empty()) return s;
+
+        size_t size = s.size() + 1; // +1 for null terminator
+        char* buffer = new char[size];
+        std::copy(s.begin(), s.end(), buffer);
+        buffer[s.size()] = '\0'; // Ensure null termination
+
+        urlDecode(buffer, size, alter_pluses);
+
+        std::string result(buffer);
+        delete[] buffer;
+        return result;
+    }
+
+    std::string sha1(const std::string &s)
+    {
+        unsigned char hash[21] = { 0x00 };
+
+#if MBEDTLS_VERSION_NUMBER >= 0x02070000 && MBEDTLS_VERSION_NUMBER < 0x03000000
+        // Use the newer mbedtls API
+        int ret = mbedtls_sha1_ret((const unsigned char *)s.c_str(), s.length(), hash);
+        if (ret != 0) {
+            Debug_printf("mbedtls_sha1 failed with error code %d\n", ret);
+            return "";
+        }
+#else
+        // Use the legacy mbedtls API
+        int ret = mbedtls_sha1((const unsigned char *)s.c_str(), s.length(), hash);
+        if (ret != 0) {
+            Debug_printf("mbedtls_sha1 failed with error code %d\n", ret);
+            return "";
+        }
+#endif
+        // These lines were commented in the original code
+        // unsigned char output[64];
+        // size_t outlen;
+        // mbedtls_base64_encode(output, 64, &outlen, hash, 20);
+        
+        std::string o(reinterpret_cast< char const* >(hash));
+        return toHex(o);
+    }
+
+    std::string urlDecode(const std::string& s)
+    {
+        return urlDecode(s, true);
     }
 
     std::string format(const char *format, ...)
@@ -577,15 +720,15 @@ namespace mstr {
     {
         //Debug_printv("url[%s] path[%s]", url.c_str(), path.c_str());
         // drop last dir
-        // check if it isn't shorter than streamFile
+        // check if it isn't shorter than sourceFile
         // add plus
         int lastSlash = path.find_last_of('/');
         if ( lastSlash == path.size() - 1 ) {
             lastSlash = path.find_last_of('/', path.size() - 2);
         }
         std::string parent = mstr::dropLast(path, path.size() - lastSlash);
-        // if(parent.length()-streamFile->url.length()>1)
-        //     parent = streamFile->url;
+        // if(parent.length()-sourceFile->url.length()>1)
+        //     parent = sourceFile->url;
         return parent + "/" + plus;
     }
 

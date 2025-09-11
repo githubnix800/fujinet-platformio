@@ -2,10 +2,11 @@
 #define NETWORK_H
 
 #ifdef ESP_PLATFORM
-#include <driver/timer.h>
+#include <esp_timer.h>
 #endif
 
 #include <string>
+#include <memory>
 #include <vector>
 
 #include "../bus/bus.h"
@@ -162,7 +163,7 @@ private:
     /**
      * The PeoplesUrlParser object used to hold/process a URL
      */
-    PeoplesUrlParser *urlParser = nullptr;
+    std::unique_ptr<PeoplesUrlParser> urlParser = nullptr;
 
     /**
      * Instance of currently open network protocol
@@ -201,23 +202,23 @@ private:
     /**
      * The AUX1 value used for OPEN.
      */
-    uint8_t open_aux1;
+    uint8_t open_aux1 = 0;
 
     /**
      * The AUX2 value used for OPEN.
      */
-    uint8_t open_aux2;
+    uint8_t open_aux2 = 0;
 
     /**
      * The Translation mode ORed into AUX2 for READ/WRITE/STATUS operations.
      * 0 = No Translation, 1 = CR<->EOL (Macintosh), 2 = LF<->EOL (UNIX), 3 = CR/LF<->EOL (PC/Windows)
      */
-    uint8_t trans_aux2;
+    uint8_t trans_aux2 = 0;
 
     /**
      * Return value for DSTATS inquiry
      */
-    uint8_t inq_dstats=0xFF;
+    uint8_t inq_dstats = 0xFF;
 
     /**
      * The login to use for a protocol action
@@ -261,17 +262,17 @@ private:
     /**
      * The fnJSON parser wrapper object
      */
-    FNJSON *json;
+    FNJSON *json = nullptr;
 
     /**
      * Bytes sent of current JSON query object.
      */
-    unsigned short json_bytes_remaining=0;
+    unsigned short json_bytes_remaining = 0;
 
     /**
      * @brief the write buffer
      */
-    uint8_t *newData = nullptr;
+    std::vector<uint8_t> newData;
 
     /**
      * Instantiate protocol object

@@ -29,6 +29,8 @@ public:
     virtual void set_proceed(bool level) override { _uart.set_proceed(level); }
     virtual void set_interrupt(bool level) override { _uart.set_interrupt(level); }
 
+    virtual void bus_idle(uint16_t ms) override;
+
     virtual int available() override { return _uart.available(); }
     virtual void flush() override { _uart.flush(); }
     virtual void flush_input() override { _uart.flush_input(); }
@@ -36,8 +38,8 @@ public:
     // read single byte
     virtual int read() override { return _uart.read(); }
     // read bytes into buffer
-    virtual size_t read(uint8_t *buffer, size_t length, bool command_mode=false) override {
-        return _uart.readBytes(buffer, length, command_mode);
+    virtual size_t read(uint8_t *buffer, size_t length) override {
+        return _uart.readBytes(buffer, length);
     }
 
     // write single byte
@@ -52,7 +54,7 @@ public:
         _uart.set_port(device, command_pin, proceed_pin);
     }
     const char* get_port(int &command_pin, int &proceed_pin) {
-        return _uart.get_port(command_pin, proceed_pin);
+        return _uart.get_port(&command_pin, &proceed_pin);
     }
 };
 

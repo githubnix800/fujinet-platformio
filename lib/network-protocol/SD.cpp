@@ -14,6 +14,7 @@
 #include "../network-protocol/status_error_codes.h"
 #include "compat_string.h"
 
+#include <vector>
 
 NetworkProtocolSD::NetworkProtocolSD(std::string *rx_buf, std::string *tx_buf, std::string *sp_buf)
     : NetworkProtocolFS(rx_buf, tx_buf, sp_buf)
@@ -40,16 +41,16 @@ bool NetworkProtocolSD::open_file_handle()
     // Map aux1 to mode
     switch (aux1_open)
     {
-    case 4:
+    case PROTOCOL_OPEN_READ:
         mode = FILE_READ;
         break;
-    case 8:
+    case PROTOCOL_OPEN_WRITE:
         mode = FILE_WRITE;
         break;
-    case 9:
+    case PROTOCOL_OPEN_APPEND:
         mode = FILE_APPEND;
         break;
-    case 12:
+    case PROTOCOL_OPEN_READWRITE:
         mode = FILE_READ_WRITE;
         break;
     }
@@ -152,12 +153,6 @@ bool NetworkProtocolSD::read_file_handle(uint8_t *buf, unsigned short len)
         else
             errno_to_error(); // fread may not set errno!
     }
-    else
-    {
-        // stay compatible with the rest - indicate EOF already on last byte
-        if (len >= fileSize)
-            eof_reached = true;
-    }
     Debug_printf("NetworkProtocolSD::read_file_handle(len: %u) error: %d\r\n", len, error);
 
     return NETWORK_ERROR_SUCCESS != error;
@@ -215,28 +210,6 @@ bool NetworkProtocolSD::write_file_handle(uint8_t *buf, unsigned short len)
     return NETWORK_ERROR_SUCCESS != error;
 }
 
-bool NetworkProtocolSD::status_file(NetworkStatus *status)
-{
-    NetworkProtocolFS::status_file(status);
-    status->connected = false == check_fs() ? 1 : 0;
-    status->error = eof_reached ? NETWORK_ERROR_END_OF_FILE : error;
-    //Debug_printf("NetworkProtocolSD::status_file - BW: %d C: %d E: %d\r\n", status->rxBytesWaiting, status->connected, status->error);
-
-    NetworkProtocol::status(status);
-
-    return false;
-}
-
-bool NetworkProtocolSD::status_dir(NetworkStatus *status)
-{
-    NetworkProtocolFS::status_dir(status);
-    status->connected = false == check_fs() ? 1 : 0;
-    //Debug_printf("NetworkProtocolSD::status_dir - BW: %d C: %d E: %d\r\n", status->rxBytesWaiting, status->connected, status->error);
-
-    NetworkProtocol::status(status);
-
-    return false;
-}
 
 uint8_t NetworkProtocolSD::special_inquiry(uint8_t cmd)
 {
@@ -389,4 +362,19 @@ bool NetworkProtocolSD::unlock(PeoplesUrlParser *url, cmdFrame_t *cmdFrame)
 
     error = NETWORK_ERROR_NOT_IMPLEMENTED;
     return true;
+}
+
+off_t NetworkProtocolSD::seek(off_t offset, int whence)
+{
+    off_t new_offset;
+
+
+    new_offset = ::fseek(fh, offset, whence);
+
+    // fileSize isn't fileSize, it's bytes remaining. Call stat() to fix fileSize
+    stat();
+    fileSize -= new_offset;
+    receiveBuffer->clear();
+
+    return new_offset;
 }

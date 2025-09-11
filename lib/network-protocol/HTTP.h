@@ -3,6 +3,9 @@
 
 #include <expat.h>
 
+#include "WebDAV.h"
+#include "FS.h"
+
 #ifdef ESP_PLATFORM
 #include "fnHttpClient.h"
 #define HTTP_CLIENT_CLASS fnHttpClient
@@ -11,13 +14,19 @@
 #define HTTP_CLIENT_CLASS mgHttpClient
 #endif
 
-#include "WebDAV.h"
-#include "FS.h"
-
 // on Windows/MinGW DELETE is defined already ...
 #if defined(_WIN32) && defined(DELETE)
 #undef DELETE
 #endif
+
+
+#define OPEN_MODE_HTTP_GET      (0x04)
+#define OPEN_MODE_HTTP_PUT      (0x08)
+#define OPEN_MODE_HTTP_GET_H    (0x0C)
+#define OPEN_MODE_HTTP_POST     (0x0D)
+#define OPEN_MODE_HTTP_PUT_H    (0x0E)
+#define OPEN_MODE_HTTP_DELETE   (0x05)
+#define OPEN_MODE_HTTP_DELETE_H (0x09)
 
 class NetworkProtocolHTTP : public NetworkProtocolFS
 {
@@ -199,14 +208,16 @@ private:
     int resultCode = 0;
 
     /**
-     * Array of up to 32 headers
+     * Headers the client wants us to collect information on if they are seen.
+     * The contract is to only collect headers the client is interested in, which they register for before making the request.
      */
-    char *collect_headers[32];
+    // char *collect_headers[32];
+    std::vector<std::string> collect_headers;
 
     /**
      * Collected headers count
      */
-    size_t collect_headers_count = 0;
+    // size_t collect_headers_count = 0;
 
     /**
      * Returned headers
@@ -306,42 +317,44 @@ private:
     bool parseDir(char *buf, unsigned short len);
 };
 
-/**
-     * @brief Template to wrap Start call.
-     * @param data pointer to parent class
-     * @param El the current element being parsed
-     * @param attr the array of attributes attached to element
-     */
-template <class T>
-void Start(void *data, const XML_Char *El, const XML_Char **attr)
-{
-    T *handler = static_cast<T *>(data);
-    handler->Start(El, attr);
-}
+// moved to WebDAV.cpp
+//
+// /**
+//      * @brief Template to wrap Start call.
+//      * @param data pointer to parent class
+//      * @param El the current element being parsed
+//      * @param attr the array of attributes attached to element
+//      */
+// template <class T>
+// void Start(void *data, const XML_Char *El, const XML_Char **attr)
+// {
+//     T *handler = static_cast<T *>(data);
+//     handler->Start(El, attr);
+// }
 
-/**
- * @brief Template to wrap End call
- * @param data pointer to parent class.
- * @param El the current element being parsed.
- **/
-template <class T>
-void End(void *data, const XML_Char *El)
-{
-    T *handler = static_cast<T *>(data);
-    handler->End(El);
-}
+// /**
+//  * @brief Template to wrap End call
+//  * @param data pointer to parent class.
+//  * @param El the current element being parsed.
+//  **/
+// template <class T>
+// void End(void *data, const XML_Char *El)
+// {
+//     T *handler = static_cast<T *>(data);
+//     handler->End(El);
+// }
 
-/**
- * @brief template to wrap character data.
- * @param data pointer to parent class
- * @param s pointer to the character data
- * @param len length of character data at pointer
- **/
-template <class T>
-void Char(void *data, const XML_Char *s, int len)
-{
-    T *handler = static_cast<T *>(data);
-    handler->Char(s, len);
-}
+// /**
+//  * @brief template to wrap character data.
+//  * @param data pointer to parent class
+//  * @param s pointer to the character data
+//  * @param len length of character data at pointer
+//  **/
+// template <class T>
+// void Char(void *data, const XML_Char *s, int len)
+// {
+//     T *handler = static_cast<T *>(data);
+//     handler->Char(s, len);
+// }
 
 #endif /* NETWORKPROTOCOLHTTP_H */

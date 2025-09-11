@@ -126,6 +126,25 @@ void sioDisk::sio_status()
 
     uint8_t _status[4];
     _status[0] = 0x00;
+    
+    if (_disk != nullptr)
+    {
+        if (_disk->_disk_num_sectors == 1040)
+        {
+            _status[0] |= 0x80; // 1050 density
+        }
+
+        if (_disk->_disk_sector_size == 256)
+        {
+            _status[0] |= 0x20; // Double density
+        }
+
+        if (_disk->_disk_num_sectors == 1440 || _disk->_disk_num_sectors == 2880)
+        {
+            _status[0] |= 0x40; // Double sided
+        }
+    }
+
     _status[1] = ~DISK_CTRL_STATUS_CLEAR; // Negation of default clear status
     _status[2] = DRIVE_DEFAULT_TIMEOUT_810;
     _status[3] = 0x00;
@@ -198,11 +217,7 @@ void sioDisk::sio_write_percom_block()
    then we assume it's MEDIATYPE_ATR.
    Return value is MEDIATYPE_UNKNOWN in case of failure.
 */
-#ifdef ESP_PLATFORM
-mediatype_t sioDisk::mount(FILE *f, const char *filename, uint32_t disksize, mediatype_t disk_type)
-#else
-mediatype_t sioDisk::mount(FileHandler *f, const char *filename, uint32_t disksize, mediatype_t disk_type)
-#endif
+mediatype_t sioDisk::mount(fnFile *f, const char *filename, uint32_t disksize, mediatype_t disk_type)
 {
     // TAPE or CASSETTE: use this function to send file info to cassette device
     //  MediaType::discover_disktype(filename) can detect CAS and WAV files
@@ -239,7 +254,6 @@ mediatype_t sioDisk::mount(FileHandler *f, const char *filename, uint32_t disksi
         }
         return _disk->mount(f, disksize);
     case MEDIATYPE_ATX:
-#ifdef ESP_PLATFORM
         device_active = true;
         _disk = new MediaTypeATX();
         if (host != nullptr)
@@ -248,9 +262,6 @@ mediatype_t sioDisk::mount(FileHandler *f, const char *filename, uint32_t disksi
             strcpy(_disk->_disk_filename, filename);
         }
         return _disk->mount(f, disksize);
-#else
-        Debug_println("ATX is not yet supported");
-#endif
     case MEDIATYPE_ATR:
     case MEDIATYPE_UNKNOWN:
     default:
@@ -292,11 +303,7 @@ void sioDisk::unmount()
 }
 
 // Create blank disk
-#ifdef ESP_PLATFORM
-bool sioDisk::write_blank(FILE *f, uint16_t sectorSize, uint16_t numSectors)
-#else
-bool sioDisk::write_blank(FileHandler *f, uint16_t sectorSize, uint16_t numSectors)
-#endif
+bool sioDisk::write_blank(fnFile *f, uint16_t sectorSize, uint16_t numSectors)
 {
     Debug_print("disk CREATE NEW IMAGE\n");
 

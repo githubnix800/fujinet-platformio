@@ -19,20 +19,31 @@
 #ifndef COCO_H
 #define COCO_H
 
+#ifdef ESP32_PLATFORM
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#endif
 
 #include <forward_list>
 #include <map>
-#include <fnUART.h>
+// fnUartBUS (Serial only) was replaced with fnDwCom (Serial|TCP/Becker)
+//#include <fnUART.h>
+#include "drivewire/dwcom/fnDwCom.h"
+#include "media.h"
 
 #define DRIVEWIRE_BAUDRATE 57600
 
 /* Operation Codes */
 #define		OP_NOP		0
+#define     OP_JEFF     0xA5
 #define     OP_SERREAD  'C'
+#define     OP_SERREADM  'c'
+#define     OP_SERWRITE  0xC3
+#define     OP_SERWRITEM  0x64
 #define		OP_GETSTAT	'G'
 #define		OP_SETSTAT	'S'
+#define		OP_SERGETSTAT	'D'
+#define		OP_SERSETSTAT	'D'+128
 #define		OP_READ		'R'
 #define		OP_READEX	'R'+128
 #define		OP_WRITE	'W'
@@ -40,6 +51,8 @@
 #define		OP_REREADEX	'r'+128
 #define		OP_REWRITE	'w'
 #define		OP_INIT		'I'
+#define		OP_SERINIT	'E'
+#define		OP_SERTERM	'E'+128
 #define     OP_DWINIT   'Z'
 #define		OP_TERM		'T'
 #define		OP_TIME		'#'
@@ -51,6 +64,7 @@
 #define     OP_VPORT_READ    'C'
 #define     OP_FUJI 0xE2
 #define     OP_NET 0xE3
+#define     OP_CPM 0xE4
 
 #define FEATURE_EMCEE    0x01
 #define FEATURE_DLOAD    0x02
@@ -153,16 +167,6 @@ public:
     bool device_active = true;
 
     /**
-     * @brief return true to indicate successful command
-     */
-    void drivewire_complete() { fnUartBUS.write(true); }
-
-    /**
-     * @brief return false to indicate unsuccessful command
-     */
-    void drivewire_error() { fnUartBUS.write(false); }
-
-    /**
      * @brief Get the systemBus object that this virtualDevice is attached to.
      */
     systemBus get_bus();
@@ -189,7 +193,6 @@ private:
     drivewireModem *_modemDev = nullptr;
     drivewireFuji *_fujiDev = nullptr;
     //drivewireNetwork *_netDev[8] = {nullptr};
-    std::map<uint8_t,drivewireNetwork *> _netDev;
     drivewireUDPStream *_udpDev = nullptr;
     drivewireCassette *_cassetteDev = nullptr;
     drivewireCPM *_cpmDev = nullptr;
@@ -216,24 +219,33 @@ private:
     /**
      * @brief Sector data (256 bytes)
      */
-    uint8_t sector_data[256];
+    uint8_t sector_data[MEDIA_BLOCK_SIZE];
 
     /**
      * @brief NOP command (do nothing)
      */
+    void op_jeff();
     void op_nop();
     void op_reset();
     void op_readex();
     void op_fuji();
     void op_net();
+    void op_cpm();
     void op_write();
     void op_time();
     void op_init();
+    void op_serinit();
+    void op_serterm();
     void op_dwinit();
     void op_unhandled(uint8_t c);
     void op_getstat();
     void op_setstat();
+    void op_sergetstat();
+    void op_sersetstat();
     void op_serread();
+    void op_serreadm();
+    void op_serwrite();
+    void op_serwritem();
     void op_print();
 
     // int readSector(struct dwTransferData *dp);
@@ -301,11 +313,14 @@ public:
     drivewirePrinter *getPrinter() { return _printerdev; }
     void setPrinter(drivewirePrinter *_p) { _printerdev = _p; }
     drivewireCPM *getCPM() { return _cpmDev; }
+    std::map<uint8_t,drivewireNetwork *> _netDev;
 
     // I wish this codebase would make up its mind to use camel or snake casing.
     drivewireModem *get_modem() { return _modemDev; }
 
+#ifdef ESP32_PLATFORM
     QueueHandle_t qDrivewireMessages = nullptr;
+#endif
 };
 
 extern systemBus DRIVEWIRE;

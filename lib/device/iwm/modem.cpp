@@ -97,8 +97,8 @@ iwmModem::iwmModem(FileSystem *_fs, bool snifferEnable)
     set_term_type("dumb");
     telnet = telnet_init(telopts, _telnet_event_handler, 0, this);
 #ifdef ESP_PLATFORM // OS
-    mrxq = xQueueCreate(16384, sizeof(char));
-    mtxq = xQueueCreate(16384, sizeof(char));
+    mrxq = xQueueCreate(32770, sizeof(char));
+    mtxq = xQueueCreate(32770, sizeof(char));
     xTaskCreatePinnedToCore(_modem_task, "modemTask", 4096, this, MODEM_TASK_PRIORITY, &modemTask, MODEM_TASK_CPU);
 #endif
 }
@@ -173,7 +173,7 @@ unsigned short iwmModem::modem_print(int i)
 #ifdef ESP_PLATFORM
     itoa(i, out, 10);
 #else
-    sprintf(out, "%d", i);
+    snprintf(out, sizeof(out), "%d", i);
 #endif
 
     return modem_print(out);
@@ -1363,44 +1363,15 @@ void iwmModem::send_status_reply_packet()
 
 void iwmModem::send_status_dib_reply_packet()
 {
-    uint8_t data[25];
-
-    //* write data buffer first (25 bytes) 3 grp7 + 4 odds
-    // General Status byte
-    // Bit 7: Block  device
-    // Bit 6: Write allowed
-    // Bit 5: Read allowed
-    // Bit 4: Device online or disk in drive
-    // Bit 3: Format allowed
-    // Bit 2: Media write protected (block devices only)
-    // Bit 1: Currently interrupting (//c only)
-    // Bit 0: Currently open (char devices only)
-    data[0] = STATCODE_READ_ALLOWED | STATCODE_DEVICE_ONLINE;
-    data[1] = 0;    // block size 1
-    data[2] = 0;    // block size 2
-    data[3] = 0;    // block size 3
-    data[4] = 0x05; // ID string length - 11 chars
-    data[5] = 'M';
-    data[6] = 'O';
-    data[7] = 'D';
-    data[8] = 'E';
-    data[9] = 'M';
-    data[10] = ' ';
-    data[11] = ' ';
-    data[12] = ' ';
-    data[13] = ' ';
-    data[14] = ' ';
-    data[15] = ' ';
-    data[16] = ' ';
-    data[17] = ' ';
-    data[18] = ' ';
-    data[19] = ' ';
-    data[20] = ' ';                           // ID string (16 chars total)
-    data[21] = SP_TYPE_BYTE_FUJINET_MODEM;    // Device type    - 0x02  harddisk
-    data[22] = SP_SUBTYPE_BYTE_FUJINET_MODEM; // Device Subtype - 0x0a
-    data[23] = 0x00;                          // Firmware version 2 bytes
-    data[24] = 0x01;                          //
-    IWM.iwm_send_packet(id(), iwm_packet_type_t::status, SP_ERR_NOERROR, data, 25);
+    Debug_printf("\r\nMODEM: Sending DIB reply\r\n");
+	std::vector<uint8_t> data = create_dib_reply_packet(
+		"MODEM",                                                        // name
+		STATCODE_READ_ALLOWED | STATCODE_DEVICE_ONLINE,                 // status
+		{ 0, 0, 0 },                                                    // block size
+		{ SP_TYPE_BYTE_FUJINET_MODEM, SP_SUBTYPE_BYTE_FUJINET_MODEM },  // type, subtype
+		{ 0x00, 0x01 }                                                  // version.
+	);
+	IWM.iwm_send_packet(id(), iwm_packet_type_t::status, SP_ERR_NOERROR, data.data(), data.size());
 }
 
 void iwmModem::iwm_open(iwm_decoded_cmd_t cmd)
@@ -1432,7 +1403,7 @@ void iwmModem::iwm_read(iwm_decoded_cmd_t cmd)
     unsigned short mw;
 #endif
 
-    Debug_printf("\r\nDevice %02x READ %04x bytes from address %06x\n", id(), numbytes, addy);
+    Debug_printf("\r\nDevice %02x READ %04x bytes from address %06lx\n", id(), numbytes, addy);
 
     memset(data_buffer, 0, sizeof(data_buffer));
 
@@ -1561,30 +1532,30 @@ void iwmModem::process(iwm_decoded_cmd_t cmd)
 {
     switch (cmd.command)
     {
-    case 0x00: // status
+    case SP_CMD_STATUS:
         Debug_printf("\r\nhandling status command");
         iwm_status(cmd);
         break;
-    case 0x04: // control
+    case SP_CMD_CONTROL:
         Debug_printf("\r\nhandling control command");
         iwm_ctrl(cmd);
         Debug_printf("\r\ncontrol command done");
         break;
-    case 0x06: // open
+    case SP_CMD_OPEN:
         Debug_printf("\r\nhandling open command");
         iwm_open(cmd);
         break;
-    case 0x07: // close
+    case SP_CMD_CLOSE:
         Debug_printf("\r\nhandling close command");
         iwm_close(cmd);
         break;
-    case 0x08: // read
+    case SP_CMD_READ:
         Debug_printf("\r\nhandling read command");
         fnLedManager.set(LED_BUS, true);
         iwm_read(cmd);
         fnLedManager.set(LED_BUS, false);
         break;
-    case 0x09: // write
+    case SP_CMD_WRITE:
         Debug_printf("\r\nhandling write command");
         fnLedManager.set(LED_BUS, true);
         iwm_write(cmd);

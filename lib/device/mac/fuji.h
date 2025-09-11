@@ -43,11 +43,12 @@ typedef struct
     char fn_version[15];
 } AdapterConfig;
 
-enum appkey_mode : uint8_t
+enum appkey_mode : int8_t
 {
+    APPKEYMODE_INVALID = -1,
     APPKEYMODE_READ = 0,
     APPKEYMODE_WRITE,
-    APPKEYMODE_INVALID
+    APPKEYMODE_READ_256
 };
 
 struct appkey
@@ -132,7 +133,7 @@ protected:
 //     void iwm_stat_get_adapter_config();     // 0xE8
 //     void iwm_ctrl_new_disk();               // 0xE7
 //     void iwm_ctrl_unmount_host();           // 0xE6
- 
+
 //    void iwm_stat_get_directory_position(); // 0xE5
 //    void iwm_ctrl_set_directory_position(); // 0xE4
     /*
@@ -154,7 +155,7 @@ protected:
     */
     // void iwm_ctrl_get_device_filename();    // 0xDA
     // void iwm_stat_get_device_filename();    // 0xDA
-    
+
     // void iwm_ctrl_set_boot_config();            // 0xD9
     // void iwm_ctrl_copy_file();                  // 0xD8
     // void iwm_ctrl_set_boot_mode();              // 0xD6
@@ -168,7 +169,7 @@ protected:
     // void iwm_open(iwm_decoded_cmd_t cmd) override;
     // void iwm_close(iwm_decoded_cmd_t cmd) override;
     // void iwm_read(iwm_decoded_cmd_t cmd) override;
-    // void iwm_status(iwm_decoded_cmd_t cmd) override; 
+    // void iwm_status(iwm_decoded_cmd_t cmd) override;
 
     // void send_status_reply_packet() override;
     // void send_status_dib_reply_packet() override;
@@ -178,9 +179,9 @@ protected:
 
 public:
     bool boot_config = true;
-    
+
     bool status_wait_enabled = true;
-    
+
     // iwmDisk *bootdisk();
     macFloppy *bootdisk();
 
@@ -197,6 +198,7 @@ public:
 
     fujiHost *get_hosts(int i) { return &_fnHosts[i]; }
     fujiDisk *get_disks(int i) { return &_fnDisks[i]; }
+    fujiHost *set_slot_hostname(int host_slot, char *hostname);
 
     void _populate_slots_from_config();
     void _populate_config_from_slots();

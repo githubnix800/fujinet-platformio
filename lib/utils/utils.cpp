@@ -2,10 +2,13 @@
 #include "utils.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <map>
 #include <sstream>
 #include <stack>
-#include <cmath>
+#include <string>
+
 #include "compat_string.h"
 
 #ifndef ESP_PLATFORM
@@ -14,10 +17,19 @@
 #endif
 
 #include "../../include/debug.h"
+#include "string_utils.h"
 
 #include "samlib.h"
 
 using namespace std;
+
+// non destructive version of lowercase conversion
+std::string util_tolower(const std::string& str) {
+    std::string lower_str = str;
+    std::transform(lower_str.begin(), lower_str.end(), lower_str.begin(),
+                   [](unsigned char c){ return std::tolower(c); });
+    return lower_str;
+}
 
 // convert to lowercase (in place)
 void util_string_tolower(std::string &s)
@@ -201,14 +213,70 @@ std::string util_crunch(std::string filename)
     if (basename_long.length() > 8)
     {
         cksum = util_checksum(basename_long.c_str(), basename_long.length());
-        sprintf(cksum_txt, "%02X", cksum);
+        snprintf(cksum_txt, sizeof(cksum_txt), "%02X", cksum);
         basename[basename.length() - 2] = cksum_txt[0];
         basename[basename.length() - 1] = cksum_txt[1];
     }
 
     return basename + ext;
 }
+#ifdef BUILD_RS232
+std::string util_entry(std::string crunched, size_t fileSize, bool is_dir, bool is_locked)
+{
+    size_t ext_pos = crunched.find_last_of(".");
+    std::string basename = crunched.substr(0, ext_pos);
+    std::string ext = crunched.substr(ext_pos + 1);
+    char e[80];
+    unsigned char month = 1;
+    unsigned char day = 1;
+    unsigned int year = 24;
+    unsigned char hour = 12;
+    unsigned char minutes = 0;
+    char ampm = 'p';
 
+    if (ext_pos == string::npos)
+        ext.clear();
+
+    // Constrain to 8 characters
+    basename = basename.substr(0,8);
+    basename = basename.substr(0,basename.find_first_of('.'));
+    ext = ext.substr(0,3);
+
+    memset(e,0,sizeof(e));
+
+
+    if (is_dir)
+    {
+        snprintf(e, sizeof(e),
+            "%-8s %-3s %-10s  %2u-%02u-%02u  %2u:%02u%c",
+        basename.c_str(),
+        ext.c_str(),
+        "<DIR>",
+        month,
+        day,
+        year,
+        hour,
+        minutes,
+        ampm);
+    }
+    else
+    {
+        snprintf(e, sizeof(e),
+            "%-8s %-3s %10u  %2u-%02u-%02u  %2u:%02u%c",
+            basename.c_str(),
+            ext.c_str(),
+            fileSize,
+            month,
+            day,
+            year,
+            hour,
+            minutes,
+            ampm);
+    }
+
+    return std::string(e);
+}
+#else
 std::string util_entry(std::string crunched, size_t fileSize, bool is_dir, bool is_locked)
 {
     std::string returned_entry = "                 ";
@@ -241,7 +309,7 @@ std::string util_entry(std::string crunched, size_t fileSize, bool is_dir, bool 
             sectors = 1; // at least 1 sector.
     }
 
-    sprintf(tmp, "%03d", sectors);
+    snprintf(tmp, sizeof(tmp), "%03d", sectors);
     sectorStr = tmp;
 
     returned_entry.replace(14, 3, sectorStr);
@@ -253,10 +321,19 @@ std::string util_entry(std::string crunched, size_t fileSize, bool is_dir, bool 
 
     return returned_entry;
 }
+#endif /* !defined BUILD_RS232 */
 
 std::string util_long_entry(std::string filename, size_t fileSize, bool is_dir)
 {
+#ifdef BUILD_COCO
+#define LONG_ENTRY_TRIM_LEN 25
+#define LONG_ENTRY_EOL "\x0D"
+    std::string returned_entry = "                               ";
+#else
+#define LONG_ENTRY_TRIM_LEN 30
+#define LONG_ENTRY_EOL "\x9B"
     std::string returned_entry = "                                     ";
+#endif /* BUILD_COCO */
     std::string stylized_filesize;
 
     char tmp[8];
@@ -266,24 +343,24 @@ std::string util_long_entry(std::string filename, size_t fileSize, bool is_dir)
 
     // Double size of returned entry if > 30 chars.
     // Add EOL so SpartaDOS doesn't truncate record. grrr.
-    if (filename.length() > 30)
-        returned_entry += "\x9b" + returned_entry;
+    if (filename.length() > LONG_ENTRY_TRIM_LEN)
+        returned_entry += LONG_ENTRY_EOL + returned_entry;
 
     returned_entry.replace(0, filename.length(), filename);
 
     if (fileSize > 1048576)
-        sprintf(tmp, "%2uM", (unsigned int)(fileSize >> 20));
+        snprintf(tmp, sizeof(tmp), "%2uM", (unsigned int)(fileSize >> 20));
     else if (fileSize > 1024)
-        sprintf(tmp, "%4uK", (unsigned int)(fileSize >> 10));
+        snprintf(tmp, sizeof(tmp), "%4uK", (unsigned int)(fileSize >> 10));
     else
-        sprintf(tmp, "%4u", (unsigned int)fileSize);
+        snprintf(tmp, sizeof(tmp), "%4u", (unsigned int)fileSize);
 
     stylized_filesize = tmp;
 
     returned_entry.replace(returned_entry.length() - stylized_filesize.length() - 1, stylized_filesize.length(), stylized_filesize);
 
     returned_entry.shrink_to_fit();
-    
+
     return returned_entry;
 }
 
@@ -311,12 +388,12 @@ const char *apple2_filesize(size_t fileSize)
 #ifdef ESP_PLATFORM
      itoa(fs, apple2_fs, 10);
 #else
-    sprintf(apple2_fs, "%u", fs);
+    snprintf(apple2_fs, sizeof(apple2_fs), "%u", fs);
 #endif
     return apple2_fs;
 }
 
-char tmp[81];
+char tmp[90]; // Increased buffer size to prevent truncation warnings
 
 std::string util_long_entry_apple2_80col(std::string filename, size_t fileSize, bool is_dir)
 {
@@ -325,11 +402,13 @@ std::string util_long_entry_apple2_80col(std::string filename, size_t fileSize, 
 
     memset(tmp, 0, sizeof(tmp));
 
-    sprintf(tmp, "%s %-70s %5s",
+    // Adjusted to prevent format truncation while still creating an 80-column output
+    snprintf(tmp, sizeof(tmp), "%s %-69s %5s", // Reduced field width from 70 to 69
             apple2_folder_icon(is_dir),
             apple2_filename(filename),
             apple2_filesize(fileSize));
 
+    // Still trim to 80 columns for the returned value
     returned_entry = string(tmp, 80);
     return returned_entry;
 }
@@ -355,6 +434,30 @@ int util_ellipsize(const char *src, char *dst, int dstsize)
         return strlcpy(dst, src, dstsize);
     }
 
+    // Replace directories with .../ and only leave the basename.
+    const char *basename = strrchr(src, '/');
+    if (basename != NULL)
+    {
+        if (strlen(basename) > 1 && dstsize >= 5)
+        {
+            basename++; // skip slash
+
+            int copied = strlcpy(dst, "...", dstsize);
+            int remaining = dstsize - copied - 1;
+            if (strlen(basename) < remaining)
+            {
+                return strlcat(dst, src + (srclen - remaining), dstsize);
+            }
+            else
+            {
+                char tmp[dstsize];
+                copied = strlcat(dst, "/", dstsize);
+                util_ellipsize(basename, tmp, dstsize-copied);
+                return strlcat(dst, tmp, dstsize);
+            }
+        }
+    }
+
     // Account for both the 3-character ellipses and the null character that needs to fit in the destination
     int rightlen = (dstsize - 4) / 2;
     // The left side gets one more character if the destination is odd
@@ -369,22 +472,19 @@ int util_ellipsize(const char *src, char *dst, int dstsize)
     return dstsize;
 }
 
-/*
-std::string util_ellipsize(std::string longString, int maxLength)
-{
-    size_t partSize = (maxLength - 3) >> 1; // size of left/right parts.
-    std::string leftPart;
-    std::string rightPart;
+std::string util_ellipsize_string(const std::string& src, size_t maxSize) {
+    if (src.length() <= maxSize) {
+        return src;
+    }
 
-    if (longString.length() <= maxLength)
-        return longString;
+    if (maxSize < 6) { // Not enough space for ellipsis in the middle
+        return src.substr(0, maxSize);
+    }
 
-    leftPart = longString.substr(0, partSize);
-    rightPart = longString.substr(longString.length() - partSize, longString.length());
-
-    return leftPart + "..." + rightPart;
+    size_t leftLen = (maxSize - 3) / 2; // 3 for ellipsis
+    size_t rightLen = maxSize - 3 - leftLen;
+    return src.substr(0, leftLen) + "..." + src.substr(src.length() - rightLen);
 }
-*/
 
 // Function that matches input string against given wildcard pattern
 bool util_wildcard_match(const char *str, const char *pattern)
@@ -518,9 +618,9 @@ void util_dump_bytes(const uint8_t *buff, uint32_t buff_size)
     {
         for (int k = 0; (k + j) < buff_size && k < bytes_per_line; k++)
             Debug_printf("%02X ", buff[k + j]);
-        Debug_println("");
+        Debug_println("\r\n");
     }
-    Debug_println("");
+    Debug_println("\r\n");
 }
 
 vector<string> util_tokenize(string s, char c)
@@ -575,14 +675,42 @@ void util_devicespec_fix_9b(uint8_t *buf, unsigned short len)
             buf[i] = 0x00;
 }
 
+// does 3 things:
+// 1. replace 0xa4 with 0x5f (underscore char)
+// 2. removes final 0x9b chars that may be coming out the host because of x-platform code
+// 3. converts petscii to ascii
+void clean_transform_petscii_to_ascii(std::string& data) {
+    // 1. Replace all chars of value 0xa4 to 0x5f (the dreaded underscore)
+    std::transform(data.begin(), data.end(), data.begin(), [](unsigned char c) {
+        return c == 0xa4 ? 0x5f : c;
+    });
+
+    // 2. Remove any trailing 0x9b chars
+    while (!data.empty() && static_cast<unsigned char>(data.back()) == 0x9b) {
+        data.pop_back();
+    }
+
+    // 3. Convert the characters from PETSCII to UTF8
+    data = mstr::toUTF8(data);
+}
+
 // Non-mutating
 std::string util_devicespec_fix_for_parsing(std::string deviceSpec, std::string prefix, bool is_directory_read, bool process_fs_dot)
 {
-    string unit = deviceSpec.substr(0, deviceSpec.find_first_of(":") + 1);
-    // if prefix is empty, the concatenation is still valid
-    deviceSpec = unit + prefix + deviceSpec.substr(deviceSpec.find(":") + 1);
+    if (deviceSpec.length() == 0) {
+        Debug_printv("ERROR: deviceSpec is empty, returning empty string");
+        return "";
+    }
 
-    Debug_printf("util_devicespec_fix_for_parsing(%s, %s, %s, %s)\n", deviceSpec.c_str(), prefix.c_str(), is_directory_read ? "true" : "false", process_fs_dot ? "true" : "false");
+    string unit = deviceSpec.substr(0, deviceSpec.find_first_of(":") + 1);
+    string path = deviceSpec.substr(unit.length());
+
+    // if prefix is empty, the concatenation is still valid
+    deviceSpec = unit + prefix + path;
+
+#ifdef VERBOSE_PROTOCOL
+    Debug_printf("util_devicespec_fix_for_parsing, spec: >%s<, prefix: >%s<, dir_read?: %s, fs_dot?: %s)\n", deviceSpec.c_str(), prefix.c_str(), is_directory_read ? "true" : "false", process_fs_dot ? "true" : "false");
+#endif
 
     util_strip_nonascii(deviceSpec);
 
@@ -653,10 +781,10 @@ void util_sam_say(const char *p,
     itoa(mouth, mouths, 10);
     itoa(throat, throats, 10);
 #else
-    sprintf(pitchs, "%u", pitch);
-    sprintf(speeds, "%u", speed);
-    sprintf(mouths, "%u", mouth);
-    sprintf(throats, "%u", throat);
+    snprintf(pitchs, sizeof(pitchs), "%u", pitch);
+    snprintf(speeds, sizeof(speeds), "%u", speed);
+    snprintf(mouths, sizeof(mouths), "%u", mouth);
+    snprintf(throats, sizeof(throats), "%u", throat);
 #endif
 
     memset(a, 0, sizeof(a));
@@ -682,9 +810,7 @@ void util_sam_say(const char *p,
 
     // Append the phrase to say.
     a[n++] = (char *)p;
-#ifdef ESP_PLATFORM
     sam(n, a);
-#endif
 }
 
 /**
@@ -747,16 +873,19 @@ void util_replaceAll(std::string &str, const std::string &from, const std::strin
 }
 
 /**
- * Resolve prefix containing relative references (../ or ./)
+ * Resolve path containing relative references (../ or ./)
  * to canonical path.
- * @param prefix FujiNet path such as TNFS://myhost/path/to/here/
+ * @param path FujiNet path such as TNFS://myhost/path/to/here/
+ * or tnfs://myhost/some/filename.ext
  */
-std::string util_get_canonical_path(std::string prefix)
+std::string util_get_canonical_path(std::string path)
 {
+    bool is_last_slash = (path.back() == '/') ? true : false;
+
     std::size_t proto_host_len;
 
     // stack to store the file's names.
-    std::stack<string> st;
+    std::stack<std::string> st;
 
     // temporary string which stores the extracted
     // directory name or commands("." / "..")
@@ -768,20 +897,26 @@ std::string util_get_canonical_path(std::string prefix)
     std::string res;
 
     // advance beyond protocol and hostname
-    proto_host_len = prefix.find("://");
+    proto_host_len = path.find("://");
 
-    if (proto_host_len > 0)
+    // If protocol delimiter "://" is found, skip over the protocol
+    if (proto_host_len < std::string::npos)
     {
-        proto_host_len += 3;
-        proto_host_len = prefix.find("/", proto_host_len) + 1;
+        proto_host_len += 3; // "://" is 3 chars
+        proto_host_len = path.find("/", proto_host_len) + 1;
+        res.append(path.substr(0, proto_host_len));
+    }
+    else
+    {
+        proto_host_len = 0; // no protocol prefix and hostname
+        // Preserve an absolute path if one is provided in the input
+        if (!path.empty() && path[0] == '/')
+            res = "/";
     }
 
-    res.append(prefix.substr(0, proto_host_len));
+    int len_path = path.length();
 
-    int len_prefix = prefix.length();
-
-    // for (int i = proto_host_len-1; i < len_prefix; i++)
-    for (int i = proto_host_len; i < len_prefix; i++)
+    for (int i = proto_host_len; i < len_path; i++)
     {
         // we will clear the temporary string
         // every time to accommodate new directory
@@ -789,14 +924,14 @@ std::string util_get_canonical_path(std::string prefix)
         dir.clear();
 
         // skip all the multiple '/' Eg. "/////""
-        while (prefix[i] == '/')
+        while (path[i] == '/')
             i++;
 
         // stores directory's name("a", "b" etc.)
         // or commands("."/"..") into dir
-        while (i < len_prefix && prefix[i] != '/')
+        while (i < len_path && path[i] != '/')
         {
-            dir.push_back(prefix[i]);
+            dir.push_back(path[i]);
             i++;
         }
 
@@ -822,7 +957,7 @@ std::string util_get_canonical_path(std::string prefix)
 
     // a temporary stack  (st1) which will contain
     // the reverse of original stack(st).
-    std::stack<string> st1;
+    std::stack<std::string> st1;
     while (!st.empty())
     {
         st1.push(st.top());
@@ -844,8 +979,8 @@ std::string util_get_canonical_path(std::string prefix)
         st1.pop();
     }
 
-    // kludge
-    if (res[res.length() - 1] != '/')
+    // Append trailing slash if not already there
+    if ((res.length() > 0) && (res.back() != '/') && is_last_slash)
         res.append("/");
 
     return res;
@@ -885,31 +1020,45 @@ void util_ascii_to_petscii_str(std::string &s)
                    { return util_ascii_to_petscii(c); });
 }
 
-char *util_hexdump(const void *buf, size_t len) {
-  const unsigned char *p = (const unsigned char *) buf;
-  size_t i, idx, n = 0, ofs = 0, dlen = len * 5 + 100;
-  char ascii[17] = "", *dst = (char *) calloc(1, dlen);
-  if (dst == NULL) return dst;
-  for (i = 0; i < len; i++) {
-    idx = i % 16;
-    if (idx == 0) {
-      if (i > 0 && dlen > n)
-        n += (size_t) snprintf(dst + n, dlen - n, "  %s\n", ascii);
-      if (dlen > n)
-        n += (size_t) snprintf(dst + n, dlen - n, "%04x ", (int) (i + ofs));
+std::string util_hexdump(const void *buf, size_t len)
+{
+    const unsigned char *p = (const unsigned char *)buf;
+    std::string result;
+    char line[100], ascii[17] = {};
+    size_t i, idx = 16; // Initialize idx to 16 to handle case when len is 0
+
+    for (i = 0; i < len; ++i) {
+        idx = i % 16;
+        if (idx == 0) {
+            if (i != 0) {
+                snprintf(line, sizeof(line), "  %s\n", ascii);
+                result += line;
+            }
+            snprintf(line, sizeof(line), "%04X ", (unsigned int)i);
+            result += line;
+        }
+
+        snprintf(line, sizeof(line), " %02X", p[i]);
+        result += line;
+
+        ascii[idx] = (isprint(p[i]) ? p[i] : '.');
+        ascii[idx + 1] = '\0';
     }
-    if (dlen < n) break;
-    n += (size_t) snprintf(dst + n, dlen - n, " %02x", p[i]);
-    ascii[idx] = (char) (p[i] < 0x20 || p[i] > 0x7e ? '.' : p[i]);
-    ascii[idx + 1] = '\0';
-  }
-  while (i++ % 16) {
-    if (n < dlen) n += (size_t) snprintf(dst + n, dlen - n, "%s", "   ");
-  }
-  if (n < dlen) n += (size_t) snprintf(dst + n, dlen - n, "  %s\n", ascii);
-  if (n > dlen - 1) n = dlen - 1;
-  dst[n] = '\0';
-  return dst;
+
+    // This block adjusts the final line if len is not a multiple of 16
+    if (len % 16) {
+        for (size_t j = idx + 1; j < 16; ++j) {
+            result += "   ";
+        }
+    }
+
+    // Append the final ASCII representation, if len > 0
+    if (len != 0) {
+        snprintf(line, sizeof(line), "  %s\n", ascii);
+        result += line;
+    }
+
+    return result;
 }
 
 bool isApproximatelyInteger(double value, double tolerance) {
@@ -947,7 +1096,7 @@ void util_debug_printf(const char *fmt, ...)
             printf("\n");
     }
 
-    if (print_ts) 
+    if (print_ts)
     {
         // printf("DEBUG > ");
         timeval tv;
@@ -982,3 +1131,23 @@ void util_debug_printf(const char *fmt, ...)
     fflush(stdout);
 }
 #endif // !ESP_PLATFORM
+
+char* util_strndup(const char* s, size_t n) {
+    // Find the length of the string up to n characters
+    size_t len = strnlen(s, n);
+    // Allocate memory for the new string
+    char* new_str = (char*)malloc(len + 1);
+    if (new_str == NULL) {
+        // Allocation failed
+        return NULL;
+    }
+    // Copy the string into the new memory and null-terminate it
+    memcpy(new_str, s, len);
+    new_str[len] = '\0';
+    return new_str;
+}
+
+int get_value_or_default(const std::map<int, int>& map, int key, int default_value) {
+    auto it = map.find(key);
+    return it != map.end() ? it->second : default_value;
+}

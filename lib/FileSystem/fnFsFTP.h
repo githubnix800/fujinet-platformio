@@ -1,8 +1,9 @@
 #ifndef FN_FSFTP_H
 #define FN_FSFTP_H
 
-#include <stdint.h>
 #include <cstddef>
+#include <memory>
+#include <stdint.h>
 
 #include "peoples_url_parser.h"
 #include "fnFTP.h"
@@ -14,9 +15,9 @@ class FileSystemFTP : public FileSystem
 {
 private:
     // parsed FTP URL
-    PeoplesUrlParser *_url;
+    std::unique_ptr<PeoplesUrlParser> _url;
 
-    // fnFTP instance
+    // FTP client
     fnFTP *_ftp;
 
     // directory cache
@@ -33,7 +34,9 @@ public:
     const char *typestring() override { return type_to_string(FSTYPE_FTP); };
 
     FILE *file_open(const char *path, const char *mode = FILE_READ) override;
+#ifndef FNIO_IS_STDIO
     FileHandler *filehandler_open(const char *path, const char *mode = FILE_READ) override;
+#endif
 
     bool exists(const char *path) override;
 
@@ -52,10 +55,10 @@ public:
     uint16_t dir_tell() override;
     bool dir_seek(uint16_t pos) override;
 
-    FileHandler *cache_file(const char *path);
+#ifndef FNIO_IS_STDIO
+    FileHandler *cache_file(const char *path, const char *mode);
+#endif
 
-protected:
-    bool isValidURL(PeoplesUrlParser *url);
 };
 
 #endif // FN_FSFTP_H

@@ -98,7 +98,6 @@ int WiFiManager::start()
 
     // Set WiFi mode to Station
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-
     ESP_ERROR_CHECK(esp_wifi_start());
 
     // Disable powersave for lower latency
@@ -203,7 +202,7 @@ void WiFiManager::conn_event_handler(void* arg, esp_event_base_t event_base, int
                 xEventGroupSetBits(wifi_event_group, WIFI_NO_IP_YET_BIT);
                 break;
             default:
-                Debug_printf("Ignoring event_id: %d\r\n", event_id);
+                Debug_printf("Ignoring event_id: %lu\r\n", event_id);
                 break;
         }
     }
@@ -216,7 +215,7 @@ void WiFiManager::conn_event_handler(void* arg, esp_event_base_t event_base, int
                 xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
                 break;
             default:
-                Debug_printf("Ignoring event_id: %d\r\n", event_id);
+                Debug_printf("Ignoring event_id: %lu\r\n", event_id);
                 break;
         }
     }
@@ -316,7 +315,9 @@ uint8_t WiFiManager::scan_networks(uint8_t maxresults)
     scan_conf.scan_type = WIFI_SCAN_TYPE_ACTIVE;
     scan_conf.scan_time.active.min = 100; // ms; 100 is what Arduino-ESP uses
     scan_conf.scan_time.active.max = 300; // ms; 300 is what Arduino-ESP uses
-
+    scan_conf.channel_bitmap.ghz_2_channels = 0xFFFF; // all channels
+    scan_conf.channel_bitmap.ghz_5_channels = 0xFFFFFFFF; // all channels
+    
     bool temporary_disconnect = false;
     uint16_t result = 0;
     uint8_t final_count = 0;
@@ -604,6 +605,14 @@ void WiFiManager::handle_station_stop()
     fnSystem.Net.stop_sntp_client();
 }
 
+void add_mdns_services()
+{
+    mdns_txt_item_t wdi[3] = {{"path","/dav"}, {"u","fujinet"}, {"p",""}};
+    mdns_txt_item_t hti[3] = {{"u",""},{"p",""}, {"path","/"}};
+    mdns_service_add(NULL,"_webdav","_tcp",80,wdi,3);
+    mdns_service_add(NULL,"_http","_tcp",80,hti,3);
+}
+
 void WiFiManager::_wifi_event_handler(void *arg, esp_event_base_t event_base,
                                       int32_t event_id, void *event_data)
 {
@@ -633,7 +642,7 @@ void WiFiManager::_wifi_event_handler(void *arg, esp_event_base_t event_base,
 #endif /* BUILD_ATARI */
             mdns_init();
             mdns_hostname_set(Config.get_general_devicename().c_str());
-            mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
+            add_mdns_services();
             break;
         case IP_EVENT_STA_LOST_IP:
             Debug_println("IP_EVENT_STA_LOST_IP");
@@ -765,7 +774,7 @@ int32_t WiFiManager::localIP()
 {
     std::string result;
     esp_netif_ip_info_t ip_info;
-    esp_err_t e = esp_netif_get_ip_info(get_adapter_handle(), &ip_info);
+    esp_netif_get_ip_info(get_adapter_handle(), &ip_info);
     return ip_info.ip.addr;
 }
 
@@ -858,4 +867,64 @@ std::vector<WiFiManager::stored_wifi> WiFiManager::match_stored_with_network_wif
     }
 
     return common_names;
+}
+
+void WiFiManager::store_wifi(std::string ssid, std::string password)
+{
+    // 1. if this is a new SSID and not in the old stored, we should push the current one to the top of the stored configs, and everything else down.
+    // 2. If this was already in the stored configs, push the stored one to the top, remove the new one from stored so it becomes current only.
+    // 3. if this is same as current, then just save it again. User reconnected to current, nothing to change in stored. This is default if above don't happen
+
+    int ssid_in_stored = -1;
+    for (int i = 0; i < MAX_WIFI_STORED; i++)
+    {
+        if (Config.get_wifi_stored_ssid(i) == ssid)
+        {
+            ssid_in_stored = i;
+            break;
+        }
+    }
+
+    // case 1
+    if (ssid_in_stored == -1 && Config.have_wifi_info() && Config.get_wifi_ssid() != ssid) {
+        Debug_println("Case 1: Didn't find new ssid in stored, and it's new. Pushing everything down 1 and old current to 0");
+        // Move enabled stored down one, last one will drop off
+        for (int j = MAX_WIFI_STORED - 1; j > 0; j--)
+        {
+            bool enabled = Config.get_wifi_stored_enabled(j - 1);
+            if (!enabled) continue;
+
+            Config.store_wifi_stored_ssid(j, Config.get_wifi_stored_ssid(j - 1));
+            Config.store_wifi_stored_passphrase(j, Config.get_wifi_stored_passphrase(j - 1));
+            Config.store_wifi_stored_enabled(j, true); // already confirmed this is enabled
+        }
+        // push the current to the top of stored
+        Config.store_wifi_stored_ssid(0, Config.get_wifi_ssid());
+        Config.store_wifi_stored_passphrase(0, Config.get_wifi_passphrase());
+        Config.store_wifi_stored_enabled(0, true);
+    }
+
+    // case 2
+    if (ssid_in_stored != -1 && Config.have_wifi_info() && Config.get_wifi_ssid() != ssid) {
+        Debug_printf("Case 2: Found new ssid in stored at %d, and it's not current (should never happen). Pushing everything down 1 and old current to 0\r\n", ssid_in_stored);
+        // found the new SSID at ssid_in_stored, so move everything above it down one slot, and store the current at 0
+        for (int j = ssid_in_stored; j > 0; j--)
+        {
+            Config.store_wifi_stored_ssid(j, Config.get_wifi_stored_ssid(j - 1));
+            Config.store_wifi_stored_passphrase(j, Config.get_wifi_stored_passphrase(j - 1));
+            Config.store_wifi_stored_enabled(j, true);
+        }
+
+        // push the current to the top of stored
+        Config.store_wifi_stored_ssid(0, Config.get_wifi_ssid());
+        Config.store_wifi_stored_passphrase(0, Config.get_wifi_passphrase());
+        Config.store_wifi_stored_enabled(0, true);
+    }
+
+    // save the new SSID as current
+    Config.store_wifi_ssid(ssid.c_str(), ssid.size());
+    // Clear text here, it will be encrypted internally if enabled for encryption
+    Config.store_wifi_passphrase(password.c_str(), password.size());
+
+    Config.save();
 }

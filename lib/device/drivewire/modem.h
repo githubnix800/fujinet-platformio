@@ -142,7 +142,7 @@ private:
         AT_O,
         AT_ENUMCOUNT};
 
-    uint modemBaud = 115200; // Holds modem baud rate, Default 300
+    unsigned int modemBaud = 115200; // Holds modem baud rate, Default 300
     bool DTR = false;
     bool RTS = false;
     bool XMT = false;
@@ -219,7 +219,6 @@ public:
     drivewireModem(FileSystem *_fs, bool snifferEnable);
     virtual ~drivewireModem();
 
-    UARTManager* get_uart() { return uart; }
     void set_uart(UARTManager *_uart) { uart = _uart; }
 
 

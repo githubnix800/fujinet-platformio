@@ -37,6 +37,7 @@ void fnConfig::save()
     ss << "hsioindex=" << _general.hsio_index << LINETERM;
     ss << "rotationsounds=" << _general.rotation_sounds << LINETERM;
     ss << "configenabled=" << _general.config_enabled << LINETERM;
+    ss << "config_ng=" << _general.config_ng << LINETERM;
     ss << "altconfigfile=" << _general.config_filename << LINETERM;
     ss << "boot_mode=" << _general.boot_mode << LINETERM;
     if (_general.timezone.empty() == false)
@@ -162,25 +163,49 @@ void fnConfig::save()
     ss << "enable_device_slot_7=" << _denable.device_7_enabled << LINETERM;
     ss << "enable_device_slot_8=" << _denable.device_8_enabled << LINETERM;
     ss << "enable_apetime=" << _denable.apetime << LINETERM;
-
-#ifndef ESP_PLATFORM
-    // SERIAL
-    ss << LINETERM << "[Serial]" << LINETERM;
-    ss << "port=" << _serial.port << LINETERM;
-    ss << "command=" << std::string(_serial_command_pin_names[_serial.command]) << LINETERM;
-    ss << "proceed=" << std::string(_serial_proceed_pin_names[_serial.proceed]) << LINETERM;
-
-    // NETSIO
-    ss << LINETERM << "[NetSIO]" << LINETERM;
-    ss << "enabled=" << _netsio.netsio_enabled << LINETERM;
-    ss << "host=" << _netsio.host << LINETERM;
-    ss << "port=" << _netsio.port << LINETERM;
+    ss << "enable_pclink=" << _denable.pclink << LINETERM;
 
     // Bus Over IP
     ss << LINETERM << "[BOIP]" << LINETERM;
     ss << "enabled=" << _boip.boip_enabled << LINETERM;
     ss << "host=" << _boip.host << LINETERM;
-    ss << "port=" << _boip.port << LINETERM;
+    if (_boip.port != CONFIG_DEFAULT_BOIP_PORT)
+    {
+        ss << "port=" << _boip.port << LINETERM;
+    }
+    else
+    {
+        ss << "port=" << LINETERM;
+    }
+
+#ifdef BUILD_RS232
+    ss << LINETERM << "[RS232]" << LINETERM;
+    ss << "baud=" << _rs232.baud << LINETERM;
+#endif
+
+#ifndef ESP_PLATFORM
+    // SERIAL
+    ss << LINETERM << "[Serial]" << LINETERM;
+    ss << "port=" << _serial.port << LINETERM;
+#ifdef BUILD_COCO
+    ss << "baud=" << _serial.baud << LINETERM;
+#endif
+#ifdef BUILD_ATARI
+    ss << "command=" << std::string(_serial_command_pin_names[_serial.command]) << LINETERM;
+    ss << "proceed=" << std::string(_serial_proceed_pin_names[_serial.proceed]) << LINETERM;
+#endif
+
+#ifdef BUILD_APPLE
+    // Bus Over Serial - not used, yet
+    ss << LINETERM << "[BOS]" << LINETERM;
+    ss << "enabled=" << _bos.bos_enabled << LINETERM;
+    ss << "port_name=" << _bos.port_name.c_str() << LINETERM;
+    ss << "baud=" << _bos.baud << LINETERM;
+    ss << "bits=" << _bos.bits << LINETERM;
+    ss << "parity=" << _bos.parity << LINETERM;
+    ss << "stop_bits=" << _bos.stop_bits << LINETERM;
+    ss << "flowcontrol=" << _bos.flowcontrol << LINETERM;
+#endif
 #endif
 
 #ifdef ESP_PLATFORM

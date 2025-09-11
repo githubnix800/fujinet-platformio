@@ -15,6 +15,8 @@
 #include "fujiDisk.h"
 #include "fujiCmd.h"
 
+#include "hash.h"
+
 #define MAX_HOSTS 8
 #define MAX_DISK_DEVICES 8
 #define MAX_NETWORK_DEVICES 4
@@ -40,11 +42,12 @@ typedef struct
     char fn_version[15];
 } __attribute__((packed)) AdapterConfig;
 
-enum appkey_mode : uint8_t
+enum appkey_mode : int8_t
 {
+    APPKEYMODE_INVALID = -1,
     APPKEYMODE_READ = 0,
     APPKEYMODE_WRITE,
-    APPKEYMODE_INVALID
+    APPKEYMODE_READ_256
 };
 
 struct appkey
@@ -89,7 +92,7 @@ private:
     mbedtls_sha256_context _sha256;
     mbedtls_sha512_context _sha512;
 
-    char hash_mode = 0;
+    Hash::Algorithm algorithm = Hash::Algorithm::UNKNOWN;
 
 protected:
     void rc2014_reset_fujinet();          // 0xFF
@@ -138,9 +141,13 @@ protected:
     void rc2014_base64_decode_length();   // 0xCA
     void rc2014_base64_decode_output();   // 0xC9
     void rc2014_hash_input();             // 0xC8
-    void rc2014_hash_compute();           // 0xC7
+    void rc2014_hash_compute(bool clear_data); // 0xC7, 0xC3
     void rc2014_hash_length();            // 0xC6
     void rc2014_hash_output();            // 0xC5
+    void rc2014_hash_clear();             // 0xC2
+
+    // TODO
+    // void rc2014_get_adapter_config_extended(); // 0xC4
 
     void rc2014_test_command();
 
@@ -154,9 +161,9 @@ protected:
 
 public:
     bool boot_config = true;
-    
+
     bool status_wait_enabled = true;
-    
+
     rc2014Disk *bootdisk();
 
     rc2014Network *network();
@@ -173,6 +180,7 @@ public:
 
     fujiHost *get_hosts(int i) { return &_fnHosts[i]; }
     fujiDisk *get_disks(int i) { return &_fnDisks[i]; }
+    fujiHost *set_slot_hostname(int host_slot, char *hostname);
 
     void _populate_slots_from_config();
     void _populate_config_from_slots();

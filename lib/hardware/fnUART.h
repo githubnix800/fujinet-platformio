@@ -4,10 +4,19 @@
 #define FNUART_H
 
 #ifdef ESP_PLATFORM
-#include <driver/uart.h>
-#endif
+#  include <driver/uart.h>
+#  define FN_UART_DEBUG   UART_NUM_0
+#  if defined(BUILD_RS232) || defined(PINMAP_COCO_ESP32S3)
+#    define FN_UART_BUS   UART_NUM_1
+#  else
+#    define FN_UART_BUS   UART_NUM_2
+#  endif
+#endif // ESP_PLATFORM
 
 #if defined (_WIN32)
+// The inclusion of windows.h is causing compiler warnings where winsock2 is also needed, so added it here as most
+// code that includes fnUART uses winsock2
+#include <winsock2.h>
 #include <windows.h>
 #endif
 
@@ -48,10 +57,11 @@ private:
 
 public:
 #ifdef ESP_PLATFORM
-    UARTManager(uart_port_t uart_num=0);
+    UARTManager(uart_port_t uart_num = UART_NUM_0);
 
     void begin(int baud);
     void end();
+    uint32_t get_baudrate();
     void set_baudrate(uint32_t baud);
     bool initialized() { return _initialized; }
 
@@ -98,8 +108,8 @@ public:
     void suspend(int sec=5);
     bool initialized() { return _initialized; }
 
-    void set_port(const char *device, int command_pin, int proceed_pin);
-    const char* get_port(int &command_pin, int &proceed_pin);
+    void set_port(const char *device, int command_pin=0, int proceed_pin=0);
+    const char* get_port(int *ptr_command_pin=nullptr, int *ptr_proceed_pin=nullptr);
 
     void set_baudrate(uint32_t baud);
     uint32_t get_baudrate() { return _baud; }
@@ -116,7 +126,7 @@ public:
     bool waitReadable(uint32_t timeout_ms);
 
     int read();
-    size_t readBytes(uint8_t *buffer, size_t length, bool command_mode=false);
+    size_t readBytes(uint8_t *buffer, size_t length);
     size_t readBytes(char *buffer, size_t length) { return readBytes((uint8_t *)buffer, length); }
 
     size_t write(uint8_t);
@@ -132,7 +142,7 @@ public:
 
     // //size_t println(const char *format, ...);
     // size_t println(const char *str);
-    // size_t println() { return print("\n"); };
+    // size_t println() { return print("\r\n"); };
     // size_t println(std::string str);
     // size_t println(int num, int base = 10);
 
@@ -147,8 +157,12 @@ public:
 };
 
 #ifdef ESP_PLATFORM
-extern UARTManager fnUartDebug;
-extern UARTManager fnUartBUS;
+  // Serial "debug port" for FN-ESP (not available on FN-PC)
+  extern UARTManager fnUartDebug;
+  // Serial "bus port" (CoCo uses fnDwCom - configurable serial or TCP (Becker) drivewire port)
+  #ifndef BUILD_COCO
+    extern UARTManager fnUartBUS;
+  #endif
 #endif
 
 #endif //FNUART_H

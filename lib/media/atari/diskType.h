@@ -2,14 +2,8 @@
 #define _MEDIATYPE_
 
 #include <stdint.h>
-
-#ifdef ESP_PLATFORM
-#include <stdio.h>
-#else
-#include "fnFile.h"
-#endif
-
-#include "../fuji/fujiHost.h"
+#include "fnio.h"
+#include "fujiHost.h"
 
 #define INVALID_SECTOR_VALUE 65536
 
@@ -52,13 +46,8 @@ enum mediatype_t
 class MediaType
 {
 protected:
-#ifdef ESP_PLATFORM
-    FILE *_disk_fileh = nullptr;
-#else
-    FileHandler *_disk_fileh = nullptr;
-#endif
+    fnFile *_disk_fileh = nullptr;
     uint32_t _disk_image_size = 0;
-    uint16_t _disk_sector_size = DISK_BYTES_PER_SECTOR_SINGLE;
     int32_t _disk_last_sector = INVALID_SECTOR_VALUE;
     uint8_t _disk_controller_status = DISK_CTRL_STATUS_CLEAR;
     bool _disk_readonly = true;
@@ -86,21 +75,18 @@ public:
 
     uint8_t _disk_sectorbuff[DISK_SECTORBUF_SIZE];
     uint32_t _disk_num_sectors = 0;
+    uint16_t _disk_sector_size = DISK_BYTES_PER_SECTOR_SINGLE;
 
     fujiHost *_disk_host = nullptr;
 
     mediatype_t _disktype = MEDIATYPE_UNKNOWN;
     bool _allow_hsio = true;
 
-#ifdef ESP_PLATFORM
-    virtual mediatype_t mount(FILE *f, uint32_t disksize) = 0;
-#else
-    virtual mediatype_t mount(FileHandler *f, uint32_t disksize) = 0;
-#endif
+    virtual mediatype_t mount(fnFile *f, uint32_t disksize) = 0;
     virtual void unmount();
 
     // Returns TRUE if an error condition occurred
-    virtual bool format(uint16_t *respopnsesize);
+    virtual bool format(uint16_t *responsesize);
 
     // Returns TRUE if an error condition occurred
     virtual bool read(uint16_t sectornum, uint16_t *readcount) = 0;

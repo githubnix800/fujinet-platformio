@@ -12,14 +12,7 @@
 
 #include "../../include/pinmap.h"
 
-
-#define UART_DEBUG UART_NUM_0
-#define UART_ADAMNET UART_NUM_2
-#ifdef BUILD_RS232
-#define UART_SIO UART_NUM_1
-#else
-#define UART_SIO UART_NUM_2
-#endif
+#include "../../include/debug.h"
 
 // Number of RTOS ticks to wait for data in TX buffer to complete sending
 #define MAX_FLUSH_WAIT_TICKS 200
@@ -27,8 +20,13 @@
 #define MAX_WRITE_BYTE_TICKS 100
 #define MAX_WRITE_BUFFER_TICKS 1000
 
-UARTManager fnUartDebug(UART_DEBUG);
-UARTManager fnUartBUS(UART_SIO);
+// Serial "debug port"
+UARTManager fnUartDebug(FN_UART_DEBUG);
+
+// Serial "bus port" (CoCo uses fnDwCom - configurable serial or TCP (Becker) drivewire port)
+#ifndef BUILD_COCO
+UARTManager fnUartBUS(FN_UART_BUS);
+#endif
 
 // Constructor
 UARTManager::UARTManager(uart_port_t uart_num) : _uart_num(uart_num), _uart_q(NULL) {}
@@ -48,24 +46,23 @@ void UARTManager::begin(int baud)
         end();
     }
 
-    uart_config_t uart_config =
-        {
-            .baud_rate = baud,
-            .data_bits = UART_DATA_8_BITS,
+    uart_config_t uart_config;
+    memset(&uart_config, 0, sizeof(uart_config));
+    uart_config.baud_rate = baud;
+    uart_config.data_bits = UART_DATA_8_BITS;
 #ifdef BUILD_LYNX
-            .parity = UART_PARITY_ODD,
+    uart_config.parity = UART_PARITY_ODD;
 #else
-            .parity = UART_PARITY_DISABLE,
+    uart_config.parity = UART_PARITY_DISABLE;
 #endif /* BUILD_LYNX */
-            .stop_bits = UART_STOP_BITS_1,
-            .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-            .rx_flow_ctrl_thresh = 122, // No idea what this is for, but shouldn't matter if flow ctrl is disabled?
+    uart_config.stop_bits = UART_STOP_BITS_1;
+    uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+    uart_config.rx_flow_ctrl_thresh = 122; // No idea what this is for, but shouldn't matter if flow ctrl is disabled?
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-            .source_clk = UART_SCLK_DEFAULT
+    uart_config.source_clk = UART_SCLK_DEFAULT;
 #else
-            .use_ref_tick = false       // ?
+    uart_config.use_ref_tick = false;       // ?
 #endif
-        };
 
     // This works around an obscure hardware bug where resetting UART2 causes the TX to become corrupted
     // when the FIFO is reset by this function. Blame me for it -Thom
@@ -114,10 +111,14 @@ void UARTManager::begin(int baud)
         uart_set_line_inverse(_uart_num, UART_SIGNAL_TXD_INV | UART_SIGNAL_RXD_INV);
 #endif /* BUILD_ADAM */
 
-#ifdef BUILD_COCO
+#ifdef BUILD_COCO                   // do invert for coco builds
+#ifndef PINMAP_COCO_CART           // do not invert for coco carts
+#ifndef PINMAP_FOENIX_OS9_D32PRO  // do not invert for Foenix
     if (_uart_num == 2)
         uart_set_line_inverse(_uart_num, UART_SIGNAL_TXD_INV | UART_SIGNAL_RXD_INV);
-#endif /* BUILD_ADAM */
+#endif /* PINMAP_FOENIX_OS9_D32PRO */
+#endif /* PINMAP_COCO_CART */
+#endif /* BUILD_COCO */
 
 
     // Arduino default buffer size is 256
@@ -183,6 +184,15 @@ int UARTManager::peek()
     return 0;
 }
 
+/* Get current baud rate
+*/
+uint32_t UARTManager::get_baudrate()
+{
+    uint32_t baud;
+    uart_get_baudrate(_uart_num, &baud);
+    return baud;
+}
+
 /* Changes baud rate
  */
 void UARTManager::set_baudrate(uint32_t baud)
@@ -207,14 +217,20 @@ int UARTManager::read(void)
     {
 #ifdef DEBUG
         if (result == 0)
+        {
             Debug_println("### UART read() TIMEOUT ###");
+        }
         else
+        {
             Debug_printf("### UART read() ERROR %d ###\r\n", result);
+        }
 #endif
         return -1;
     }
     else
+    {
         return byte;
+    }
 }
 
 /* Since the underlying Stream calls this Read() multiple times to get more than one

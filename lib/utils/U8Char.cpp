@@ -34,6 +34,9 @@ const char16_t U8Char::utf8map[] = {
 
 };
 
+// std::unordered_map<char16_t, uint8_t> U8Char::ch_to_petascii_map;
+// std::once_flag U8Char::ch_to_petascii_init_flag;
+
 void U8Char::fromUtf8Stream(std::istream* reader) {
     uint8_t byte = reader->get();
     if(byte<=0x7f) {
@@ -111,11 +114,16 @@ std::string U8Char::toUtf8() {
 }
 
 uint8_t U8Char::toPetscii() {
-    for(int i = 0; i<256; i++) {
-        if(utf8map[i]==ch)
-            return i;
-    }
-    return missing;
+    // we only need to convert standard ascii values 0-255 to petscii, everything else is "missing". This only needs to be done in 2 ranges, no need for map
+    if (ch > 255) return missing;
+
+    uint8_t c = (uint8_t) ch;
+    if ((c > 0x40) && (c < 0x5B))
+        c += 0x20;
+    else if ((c > 0x60) && (c < 0x7B))
+        c -= 0x20;
+    
+    return c;
 }
 
 // for punycode we need utf8 converted to uint32_t 

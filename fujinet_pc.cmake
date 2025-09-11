@@ -8,6 +8,7 @@ project(fujinet-pc)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+
 if(FUJINET_TARGET STREQUAL "ATARI")
     # fujinet.build_platform
     set(FUJINET_BUILD_PLATFORM BUILD_ATARI)
@@ -22,9 +23,62 @@ elseif(FUJINET_TARGET STREQUAL "APPLE")
     set(FUJINET_BUILD_BOARD fujinet-pc-apple)
     # fujinet.build_bus
     set(FUJINET_BUILD_BUS IWM)
+elseif(FUJINET_TARGET STREQUAL "COCO")
+    # fujinet.build_platform
+    set(FUJINET_BUILD_PLATFORM BUILD_COCO)
+    # fujinet.build_board (used by build_webui.py)
+    set(FUJINET_BUILD_BOARD fujinet-pc-coco)
+    # fujinet.build_bus
+    set(FUJINET_BUILD_BUS IWM)
 else()
-    message(FATAL_ERROR "Invalid target '${FUJINET_TARGET}'! Please choose from 'ATARI' or 'APPLE'.")
+    message(FATAL_ERROR "Invalid target: '${FUJINET_TARGET}'. Please choose from 'ATARI', 'APPLE', or 'COCO'.")
 endif()
+
+if(FUJINET_TARGET STREQUAL "APPLE")
+    ######################## SLIP PROTOCOL PROCESSING
+    set(SLIP_PROTOCOL "NET" CACHE STRING "Select the protocol type (NET or COM)")
+
+    set_property(CACHE SLIP_PROTOCOL PROPERTY STRINGS "NET" "COM")
+
+    if(NOT SLIP_PROTOCOL STREQUAL "NET" AND NOT SLIP_PROTOCOL STREQUAL "COM")
+      message(FATAL_ERROR "Invalid value for SLIP_PROTOCOL: ${SLIP_PROTOCOL}. Please choose either NET or COM.")
+    endif()
+
+    # convert to values for C++ code to use as macros
+    if(SLIP_PROTOCOL STREQUAL "NET")
+        add_compile_definitions(SLIP_PROTOCOL_NET=1)
+    elseif(SLIP_PROTOCOL STREQUAL "COM")
+        add_compile_definitions(SLIP_PROTOCOL_COM=1)
+    endif()
+
+    message(STATUS "SLIP_PROTOCOL is ${SLIP_PROTOCOL}")
+    ################################################
+endif()
+
+find_package(PkgConfig)
+
+
+# # Determine MSYS environment
+# # Check if MSYSTEM is defined and set variables accordingly
+# if(DEFINED ENV{MSYSTEM})
+#     if($ENV{MSYSTEM} STREQUAL "CLANG64")
+#         set(MSYS_LIBRARY_PATH /clang64/lib)
+#         set(MSYS_INCLUDE_PATH /clang64/include)
+#     elseif($ENV{MSYSTEM} STREQUAL "MINGW64")
+#         set(MSYS_LIBRARY_PATH /mingw64/lib)
+#         set(MSYS_INCLUDE_PATH /mingw64/include)
+#     elseif($ENV{MSYSTEM} STREQUAL "UCRT64")
+#         set(MSYS_LIBRARY_PATH /ucrt64/lib)
+#         set(MSYS_INCLUDE_PATH /ucrt64/include)
+#     elseif($ENV{MSYSTEM} STREQUAL "CLANG32")
+#         set(MSYS_LIBRARY_PATH /clang32/lib)
+#         set(MSYS_INCLUDE_PATH /clang32/include)
+#     endif()
+# else()
+#     # Handle the case where MSYSTEM is not defined (e.g., Linux or other environments)
+#     set(MSYS_LIBRARY_PATH "")
+#     set(MSYS_INCLUDE_PATH "")
+# endif()
 
 # platformio.data_dir (not used by FujiNet-PC)
 #set(PLATFORM_DATA_DIR ${CMAKE_SOURCE_DIR}/data/${FUJINET_BUILD_PLATFORM})
@@ -35,31 +89,47 @@ set(BUILD_DATA_DIR ${CMAKE_CURRENT_BINARY_DIR}/data)
 
 # -DDBUG2 to enable monitor messages for a release build
 # -DSKIP_SERVER_CERT_VERIFY does not work with MbedTLS
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D${FUJINET_BUILD_PLATFORM} -DSP_OVER_SLIP -DFLASH_SPIFFS -DDBUG2")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D${FUJINET_BUILD_PLATFORM} -DDEV_RELAY_SLIP -DFLASH_SPIFFS -DDBUG2")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DVERBOSE_HTTP -D__PC_BUILD_DEBUG__")
 
 # mongoose.c some compile options: -DMG_ENABLE_LINES=1 -DMG_ENABLE_DIRECTORY_LISTING=1 -DMG_ENABLE_SSI=1
-# # use OpenSSL
-# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D${FUJINET_BUILD_PLATFORM} -DMG_ENABLE_OPENSSL=1 -DMG_ENABLE_LOG=0")
-# use MbedTLS
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D${FUJINET_BUILD_PLATFORM} -DMG_ENABLE_MBEDTLS=1 -DMG_ENABLE_LOG=0 -DSP_OVER_SLIP")
+# # use OpenSSL (MG_TLS=2)
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D${FUJINET_BUILD_PLATFORM} -DMG_TLS=2 -DMG_ENABLE_LOG=0")
+
+# use MbedTLS (MG_TLS=1)
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D${FUJINET_BUILD_PLATFORM} -DMG_TLS=1 -DMG_ENABLE_LOG=0 -DDEV_RELAY_SLIP")
+# MG_TLS needed by mgHttpClient
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DMG_TLS=1")
+# additional debug when investigating TLS issue
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DMG_ENABLE_LOG=1 -DMBEDTLS_X509_CRT_PARSE_C=1 -DMBEDTLS_DEBUG_C=1")
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DMG_ENABLE_LOG=1 -DMBEDTLS_X509_CRT_PARSE_C=1 -DMBEDTLS_DEBUG_C=1")
+
+# alternatively, to use mongoose build-in TLS (MG_TLS=0)
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D${FUJINET_BUILD_PLATFORM} -DMG_TLS=3 -DMG_ENABLE_LOG=0 -DDEV_RELAY_SLIP")
 
 # INCLUDE (CheckIncludeFiles)
 # CHECK_INCLUDE_FILES (bsd/string.h HAVE_BSD_STRING_H)
 # CONFIGURE_FILE(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/include/config.h)
 # set(INCLUDE_DIRS include ${CMAKE_CURRENT_BINARY_DIR}/include
 
+# Add additional debug if set
+if(DEFINED DEBUG_NO_REBOOT)
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DDEBUG_NO_REBOOT=1")
+endif()
+
 set(INCLUDE_DIRS include
-    lib/compat lib/config lib/utils lib/hardware
-    lib/FileSystem lib/EdUrlParser
+    lib/compat lib/config lib/utils lib/hardware lib/clock
+    lib/FileSystem
     lib/tcpip lib/ftp lib/TNFSlib lib/telnet lib/fnjson
     lib/webdav lib/http lib/sam lib/task
     lib/modem-sniffer lib/printer-emulator
-    lib/network-protocol 
+    lib/network-protocol
     lib/fuji lib/bus lib/device lib/media
     lib/encrypt lib/base64
-    lib/slip
+    lib/devrelay/commands lib/devrelay/service lib/devrelay/slip lib/devrelay/types
+    lib/encoding
     components_pc/mongoose
+    components_pc/miniaudio
     components_pc/cJSON
     components_pc/libsmb2/include
     components_pc/libssh/include ${CMAKE_CURRENT_BINARY_DIR}/components_pc/libssh/include
@@ -83,7 +153,8 @@ set(SOURCES src/main.cpp
     lib/config/fnc_serial.cpp
     lib/config/fnc_util.cpp
     lib/config/fnc_wifi.cpp
-    include/debug.h 
+    include/debug.h
+    lib/clock/Clock.h lib/clock/Clock.cpp
     lib/utils/utils.h lib/utils/utils.cpp
     lib/utils/cbuf.h lib/utils/cbuf.cpp
     lib/utils/string_utils.h lib/utils/string_utils.cpp
@@ -92,22 +163,24 @@ set(SOURCES src/main.cpp
     lib/utils/U8Char.h lib/utils/U8Char.cpp
     lib/hardware/fnWiFi.h lib/hardware/fnDummyWiFi.h lib/hardware/fnDummyWiFi.cpp
     lib/hardware/led.h lib/hardware/led.cpp
-    lib/hardware/fnUART.h lib/hardware/fnUART.cpp 
+    lib/hardware/fnUART.h lib/hardware/fnUART.cpp
     lib/hardware/fnUARTUnix.cpp lib/hardware/fnUARTWindows.cpp
     lib/hardware/fnSystem.h lib/hardware/fnSystem.cpp lib/hardware/fnSystemNet.cpp
     lib/FileSystem/fnDirCache.h lib/FileSystem/fnDirCache.cpp
+    lib/FileSystem/fnFileCache.h lib/FileSystem/fnFileCache.cpp
     lib/FileSystem/fnFS.h lib/FileSystem/fnFS.cpp
     lib/FileSystem/fnFsSPIFFS.h lib/FileSystem/fnFsSPIFFS.cpp
     lib/FileSystem/fnFsSD.h lib/FileSystem/fnFsSD.cpp
     lib/FileSystem/fnFsTNFS.h lib/FileSystem/fnFsTNFS.cpp
     lib/FileSystem/fnFsSMB.h lib/FileSystem/fnFsSMB.cpp
     lib/FileSystem/fnFsFTP.h lib/FileSystem/fnFsFTP.cpp
+    lib/FileSystem/fnFsHTTP.h lib/FileSystem/fnFsHTTP.cpp
     lib/FileSystem/fnFile.h lib/FileSystem/fnFile.cpp
     lib/FileSystem/fnFileLocal.h lib/FileSystem/fnFileLocal.cpp
     lib/FileSystem/fnFileTNFS.h lib/FileSystem/fnFileTNFS.cpp
     lib/FileSystem/fnFileSMB.h lib/FileSystem/fnFileSMB.cpp
     lib/FileSystem/fnFileMem.h lib/FileSystem/fnFileMem.cpp
-    
+    lib/FileSystem/fnio.h lib/FileSystem/fnio.cpp
     lib/tcpip/fnDNS.h lib/tcpip/fnDNS.cpp
     lib/tcpip/fnUDP.h lib/tcpip/fnUDP.cpp
     lib/tcpip/fnTcpClient.h lib/tcpip/fnTcpClient.cpp
@@ -115,10 +188,12 @@ set(SOURCES src/main.cpp
     lib/ftp/fnFTP.h lib/ftp/fnFTP.cpp
     lib/TNFSlib/tnfslibMountInfo.h lib/TNFSlib/tnfslibMountInfo.cpp
     lib/TNFSlib/tnfslib.h lib/TNFSlib/tnfslib.cpp
+    lib/TNFSlib/tnfslib_udp.h lib/TNFSlib/tnfslib_udp_testing.cpp
     lib/telnet/libtelnet.h lib/telnet/libtelnet.c
     lib/fnjson/fnjson.h lib/fnjson/fnjson.cpp
     components_pc/mongoose/mongoose.h components_pc/mongoose/mongoose.c
     lib/webdav/WebDAV.h lib/webdav/WebDAV.cpp
+    lib/webdav/IndexParser.h lib/webdav/IndexParser.cpp
     lib/http/httpService.h lib/http/mgHttpService.cpp
     lib/http/httpServiceParser.h lib/http/httpServiceParser.cpp
     lib/http/httpServiceConfigurator.h lib/http/httpServiceConfigurator.cpp
@@ -144,6 +219,8 @@ set(SOURCES src/main.cpp
     lib/printer-emulator/png_printer.h lib/printer-emulator/png_printer.cpp
     lib/printer-emulator/printer_emulator.h lib/printer-emulator/printer_emulator.cpp
     lib/printer-emulator/svg_plotter.h lib/printer-emulator/svg_plotter.cpp
+    lib/network-protocol/NetworkProtocolFactory.h
+    lib/network-protocol/network_data.h
     lib/network-protocol/networkStatus.h lib/network-protocol/status_error_codes.h
     lib/network-protocol/Protocol.h lib/network-protocol/Protocol.cpp
     lib/network-protocol/ProtocolParser.h lib/network-protocol/ProtocolParser.cpp
@@ -162,43 +239,6 @@ set(SOURCES src/main.cpp
     lib/fuji/fujiHost.h lib/fuji/fujiHost.cpp
     lib/fuji/fujiDisk.h lib/fuji/fujiDisk.cpp
     lib/bus/bus.h
-    lib/bus/iwm/iwm.h lib/bus/iwm/iwm.cpp
-    lib/bus/iwm/iwm_slip.h lib/utils/std_extensions.hpp lib/bus/iwm/iwm_slip.cpp
-    lib/bus/iwm/Connection.h lib/bus/iwm/Connection.cpp
-    lib/bus/iwm/TCPConnection.h lib/bus/iwm/TCPConnection.cpp
-    lib/bus/sio/sio.h lib/bus/sio/sio.cpp
-    lib/bus/sio/siocom/sioport.h lib/bus/sio/siocom/sioport.cpp
-    lib/bus/sio/siocom/serialsio.h lib/bus/sio/siocom/serialsio.cpp
-    lib/bus/sio/siocom/netsio.h lib/bus/sio/siocom/netsio.cpp
-    lib/bus/sio/siocom/fnSioCom.h lib/bus/sio/siocom/fnSioCom.cpp
-    lib/slip/SPoSLIP.h
-    lib/slip/Packet.h
-    lib/slip/SmartPortCodes.h
-    lib/slip/Response.h lib/slip/Response.cpp
-    lib/slip/Request.h lib/slip/Request.cpp
-    lib/slip/SLIP.h lib/slip/SLIP.cpp
-    lib/slip/CloseRequest.h lib/slip/CloseRequest.cpp
-    lib/slip/CloseResponse.h lib/slip/CloseResponse.cpp
-    lib/slip/ControlRequest.h lib/slip/ControlRequest.cpp
-    lib/slip/ControlResponse.h lib/slip/ControlResponse.cpp
-    lib/slip/FormatRequest.h lib/slip/FormatRequest.cpp
-    lib/slip/FormatResponse.h lib/slip/FormatResponse.cpp
-    lib/slip/InitRequest.h lib/slip/InitRequest.cpp
-    lib/slip/InitResponse.h lib/slip/InitResponse.cpp
-    lib/slip/OpenRequest.h lib/slip/OpenRequest.cpp
-    lib/slip/OpenResponse.h lib/slip/OpenResponse.cpp
-    lib/slip/ReadBlockRequest.h lib/slip/ReadBlockRequest.cpp
-    lib/slip/ReadBlockResponse.h lib/slip/ReadBlockResponse.cpp
-    lib/slip/ReadRequest.h lib/slip/ReadRequest.cpp
-    lib/slip/ReadResponse.h lib/slip/ReadResponse.cpp
-    lib/slip/ResetRequest.h lib/slip/ResetRequest.cpp
-    lib/slip/ResetResponse.h lib/slip/ResetResponse.cpp
-    lib/slip/StatusRequest.h lib/slip/StatusRequest.cpp
-    lib/slip/StatusResponse.h lib/slip/StatusResponse.cpp
-    lib/slip/WriteBlockRequest.h lib/slip/WriteBlockRequest.cpp
-    lib/slip/WriteBlockResponse.h lib/slip/WriteBlockResponse.cpp
-    lib/slip/WriteRequest.h lib/slip/WriteRequest.cpp
-    lib/slip/WriteResponse.h lib/slip/WriteResponse.cpp
     lib/device/device.h
     lib/device/disk.h
     lib/device/printer.h
@@ -208,6 +248,89 @@ set(SOURCES src/main.cpp
     lib/device/network.h
     lib/device/udpstream.h
     lib/device/siocpm.h
+    lib/modem-sniffer/modem-sniffer.h lib/modem-sniffer/modem-sniffer.cpp
+    lib/media/media.h
+    lib/encoding/base64.h lib/encoding/base64.cpp
+    lib/encoding/hash.h lib/encoding/hash.cpp
+    lib/qrcode/qrcode.h lib/qrcode/qrcode.c
+    lib/qrcode/qrmanager.h lib/qrcode/qrmanager.cpp
+    lib/encrypt/crypt.h lib/encrypt/crypt.cpp
+    lib/compat/compat_inet.c
+    lib/compat/compat_gettimeofday.h lib/compat/compat_gettimeofday.c
+)
+
+if(FUJINET_TARGET STREQUAL "ATARI")
+    list(APPEND SOURCES
+
+    lib/bus/sio/sio.h lib/bus/sio/sio.cpp
+    lib/bus/sio/siocom/sioport.h lib/bus/sio/siocom/sioport.cpp
+    lib/bus/sio/siocom/serialsio.h lib/bus/sio/siocom/serialsio.cpp
+    lib/bus/sio/siocom/netsio.h lib/bus/sio/siocom/netsio.cpp
+    lib/bus/sio/siocom/fnSioCom.h lib/bus/sio/siocom/fnSioCom.cpp
+    lib/media/atari/diskType.h lib/media/atari/diskType.cpp
+    lib/media/atari/diskTypeAtr.h lib/media/atari/diskTypeAtr.cpp
+    lib/media/atari/diskTypeAtx.h lib/media/atari/diskTypeAtx.cpp
+    lib/media/atari/diskTypeXex.h lib/media/atari/diskTypeXex.cpp
+
+    lib/device/sio/disk.h lib/device/sio/disk.cpp
+    lib/device/sio/printer.h lib/device/sio/printer.cpp
+    lib/device/sio/printerlist.h lib/device/sio/printerlist.cpp
+    lib/device/sio/cassette.h lib/device/sio/cassette.cpp
+    lib/device/sio/fuji.h lib/device/sio/fuji.cpp
+    lib/device/sio/network.h lib/device/sio/network.cpp
+    lib/device/sio/udpstream.h lib/device/sio/udpstream.cpp
+    lib/device/sio/voice.h lib/device/sio/voice.cpp
+    lib/device/sio/clock.h lib/device/sio/clock.cpp
+    lib/device/sio/siocpm.h lib/device/sio/siocpm.cpp
+    lib/device/sio/pclink.h lib/device/sio/pclink.cpp
+    lib/device/sio/modem.h lib/device/sio/modem.cpp
+
+    )
+endif()
+
+# support for SAM audio playback
+list(APPEND SOURCES
+    lib/sam/ReciterTabs.h
+    lib/sam/reciter.h lib/sam/reciter.c
+    lib/sam/RenderTabs.h
+    lib/sam/render.h lib/sam/render.c
+    lib/sam/SamTabs.h
+    lib/sam/sam.h lib/sam/sam.c
+    lib/sam/samdebug.h lib/sam/samdebug.c
+    lib/sam/samlib.h lib/sam/samlib.cpp
+)
+
+if(FUJINET_TARGET STREQUAL "APPLE")
+    list(APPEND SOURCES
+
+    lib/bus/iwm/iwm_slip.h lib/utils/std_extensions.hpp lib/bus/iwm/iwm_slip.cpp
+    lib/bus/iwm/connector.h
+    lib/bus/iwm/iwm.h lib/bus/iwm/iwm.cpp
+
+    lib/devrelay/util.h lib/devrelay/util.cpp
+    lib/devrelay/types/Request.h lib/devrelay/types/Request.cpp
+    lib/devrelay/types/Response.h lib/devrelay/types/Response.cpp
+    lib/devrelay/service/Listener.h lib/devrelay/service/Listener.cpp
+    lib/devrelay/service/Connection.h lib/devrelay/service/Connection.cpp
+    lib/devrelay/service/Requestor.h lib/devrelay/service/Requestor.cpp
+    lib/devrelay/slip/SLIP.h lib/devrelay/slip/SLIP.cpp
+    lib/devrelay/commands/Control.h lib/devrelay/commands/Control.cpp
+    lib/devrelay/commands/WriteBlock.h lib/devrelay/commands/WriteBlock.cpp
+    lib/devrelay/commands/Close.h lib/devrelay/commands/Close.cpp
+    lib/devrelay/commands/ReadBlock.h lib/devrelay/commands/ReadBlock.cpp
+    lib/devrelay/commands/Read.h lib/devrelay/commands/Read.cpp
+    lib/devrelay/commands/Open.h lib/devrelay/commands/Open.cpp
+    lib/devrelay/commands/Format.h lib/devrelay/commands/Format.cpp
+    lib/devrelay/commands/Write.h lib/devrelay/commands/Write.cpp
+    lib/devrelay/commands/Init.h lib/devrelay/commands/Init.cpp
+    lib/devrelay/commands/Status.h lib/devrelay/commands/Status.cpp
+
+    lib/media/apple/mediaType.h lib/media/apple/mediaType.cpp
+    lib/media/apple/mediaTypeDO.h lib/media/apple/mediaTypeDO.cpp
+    lib/media/apple/mediaTypeDSK.h lib/media/apple/mediaTypeDSK.cpp
+    lib/media/apple/mediaTypePO.h lib/media/apple/mediaTypePO.cpp
+    lib/media/apple/mediaTypeWOZ.h lib/media/apple/mediaTypeWOZ.cpp
+
     lib/device/iwm/disk.h lib/device/iwm/disk.cpp
     lib/device/iwm/disk2.h lib/device/iwm/disk2.cpp
     lib/device/iwm/printer.h lib/device/iwm/printer.cpp
@@ -217,35 +340,45 @@ set(SOURCES src/main.cpp
     lib/device/iwm/network.h lib/device/iwm/network.cpp
     lib/device/iwm/clock.h lib/device/iwm/clock.cpp
     lib/device/iwm/cpm.h lib/device/iwm/cpm.cpp
-    lib/device/sio/disk.h lib/device/sio/disk.cpp
-    lib/device/sio/printer.h lib/device/sio/printer.cpp
-    lib/device/sio/printerlist.h lib/device/sio/printerlist.cpp
-    lib/device/sio/cassette.h lib/device/sio/cassette.cpp
-    lib/device/sio/fuji.h lib/device/sio/fuji.cpp
-    lib/device/sio/network.h lib/device/sio/network.cpp
-    lib/device/sio/udpstream.h lib/device/sio/udpstream.cpp
-    #lib/device/sio/voice.h lib/device/sio/voice.cpp
-    lib/device/sio/apetime.h lib/device/sio/apetime.cpp
-    lib/device/sio/siocpm.h lib/device/sio/siocpm.cpp
-    lib/device/sio/pclink.h lib/device/sio/pclink.cpp
-    lib/modem/modem.h lib/modem/modem.cpp
-    lib/modem-sniffer/modem-sniffer.h lib/modem-sniffer/modem-sniffer.cpp
-    lib/media/media.h
-    lib/media/apple/mediaType.h lib/media/apple/mediaType.cpp
-    lib/media/apple/mediaTypeDO.h lib/media/apple/mediaTypeDO.cpp
-    lib/media/apple/mediaTypeDSK.h lib/media/apple/mediaTypeDSK.cpp
-    lib/media/apple/mediaTypePO.h lib/media/apple/mediaTypePO.cpp
-    lib/media/apple/mediaTypeWOZ.h lib/media/apple/mediaTypeWOZ.cpp
-    lib/media/atari/diskType.h lib/media/atari/diskType.cpp
-    lib/media/atari/diskTypeAtr.h lib/media/atari/diskTypeAtr.cpp
-    lib/media/atari/diskTypeAtx.h 
-    lib/media/atari/diskTypeXex.h lib/media/atari/diskTypeXex.cpp
-    lib/encoding/base64.h lib/encoding/base64.cpp
-    lib/encoding/hash.h lib/encoding/hash.cpp
-    lib/encrypt/crypt.h lib/encrypt/crypt.cpp
-    lib/compat/compat_inet.c
-    lib/compat/compat_gettimeofday.h lib/compat/compat_gettimeofday.c
-)
+
+    )
+
+    if(SLIP_PROTOCOL STREQUAL "NET")
+        list(APPEND SOURCES
+            lib/bus/iwm/connector_net.h lib/bus/iwm/connector_net.cpp
+            lib/devrelay/service/TCPConnection.h lib/devrelay/service/TCPConnection.cpp
+        )
+    elseif(SLIP_PROTOCOL STREQUAL "COM")
+        list(APPEND SOURCES
+            lib/bus/iwm/connector_com.h lib/bus/iwm/connector_com.cpp
+            lib/devrelay/service/COMConnection.h lib/devrelay/service/COMConnection.cpp
+        )
+    endif()
+
+endif()
+
+if(FUJINET_TARGET STREQUAL "COCO")
+    list(APPEND SOURCES
+
+    lib/bus/drivewire/drivewire.h lib/bus/drivewire/drivewire.cpp
+    lib/bus/drivewire/dwcom/fnDwCom.h lib/bus/drivewire/dwcom/fnDwCom.cpp
+    lib/bus/drivewire/dwcom/dwport.h lib/bus/drivewire/dwcom/dwport.cpp
+    lib/bus/drivewire/dwcom/dwserial.h lib/bus/drivewire/dwcom/dwserial.cpp
+    lib/bus/drivewire/dwcom/dwbecker.h lib/bus/drivewire/dwcom/dwbecker.cpp
+
+    lib/media/drivewire/mediaType.h lib/media/drivewire/mediaType.cpp
+    lib/media/drivewire/mediaTypeDSK.h lib/media/drivewire/mediaTypeDSK.cpp
+    lib/media/drivewire/mediaTypeMRM.h lib/media/drivewire/mediaTypeMRM.cpp
+
+    lib/device/drivewire/fuji.h lib/device/drivewire/fuji.cpp
+    lib/device/drivewire/network.h lib/device/drivewire/network.cpp
+    lib/device/drivewire/dload.h lib/device/drivewire/dload.cpp
+    lib/device/drivewire/disk.h lib/device/drivewire/disk.cpp
+    lib/device/drivewire/printer.h lib/device/drivewire/printer.cpp
+    lib/device/drivewire/printerlist.h lib/device/drivewire/printerlist.cpp
+
+    )
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     set(SOURCES ${SOURCES} lib/compat/win32_uname.c)
@@ -259,6 +392,11 @@ else()
 endif()
 
 add_executable(fujinet ${SOURCES})
+
+# Explicitly link dl for Linux (needed for dlopen/dlsym/dlclose)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(fujinet dl)
+endif()
 
 # Libraries
 # build and link static libs
@@ -280,16 +418,38 @@ option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 # - to use library package (Ubuntu deb package is old, does not support cmake/find_package)
 # find_package(MbedTLS)
 # - try to find necessary files in system ...
-find_library(MBEDTLS_STATIC_LIB libmbedtls.a /usr/lib /usr/local/lib /usr/local/opt /clang64/lib /clang32/lib)
-find_library(MBEDX509_STATIC_LIB libmbedx509.a /usr/lib /usr/local/lib /usr/local/opt /clang64/lib /clang32/lib)
-find_library(MBEDCRYPTO_STATIC_LIB libmbedcrypto.a /usr/lib /usr/local/lib /usr/local/opt /clang64/lib /clang32/lib)
-find_path(MBEDTLS_INCLUDE_DIR mbedtls/ssl.h /usr/include /usr/local/include /usr/local/lib /usr/local/opt /clang64/include /clang32/include)
+set(_MBEDTLS_ROOT_HINTS $ENV{MBEDTLS_ROOT_DIR} ${MBEDTLS_ROOT_DIR})
+set(_MBEDTLS_ROOT_PATHS "$ENV{PROGRAMFILES}/libmbedtls")
+set(_MBEDTLS_ROOT_HINTS_AND_PATHS HINTS ${_MBEDTLS_ROOT_HINTS} PATHS ${_MBEDTLS_ROOT_PATHS})
+find_library(MBEDTLS_STATIC_LIB libmbedtls.a HINTS ${_MBEDTLS_ROOT_HINTS_AND_PATHS})
+find_library(MBEDX509_STATIC_LIB libmbedx509.a HINTS ${_MBEDTLS_ROOT_HINTS_AND_PATHS})
+find_library(MBEDCRYPTO_STATIC_LIB libmbedcrypto.a HINTS ${_MBEDTLS_ROOT_HINTS_AND_PATHS})
+find_path(MBEDTLS_INCLUDE_DIR mbedtls/ssl.h HINTS ${_MBEDTLS_ROOT_HINTS_AND_PATHS} PATH_SUFFIXES include)
+
 set(CRYPTO_LIBS ${MBEDTLS_STATIC_LIB} ${MBEDX509_STATIC_LIB} ${MBEDCRYPTO_STATIC_LIB})
-# message("MBEDTLS_STATIC_LIB=${MBEDTLS_STATIC_LIB}")
-# message("MBEDX509_STATIC_LIB=${MBEDX509_STATIC_LIB}")
-# message("MBEDCRYPTO_STATIC_LIB=${MBEDCRYPTO_STATIC_LIB}")
-# message("MBEDTLS_INCLUDE_DIR=${MBEDTLS_INCLUDE_DIR}")
+
+message("***************** Mbed TLS *****************")
+message("MBEDTLS_STATIC_LIB=${MBEDTLS_STATIC_LIB}")
+message("MBEDX509_STATIC_LIB=${MBEDX509_STATIC_LIB}")
+message("MBEDCRYPTO_STATIC_LIB=${MBEDCRYPTO_STATIC_LIB}")
+message("MBEDTLS_INCLUDE_DIR=${MBEDTLS_INCLUDE_DIR}")
+message("********************************************")
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    # required for certificate enumeration on windows
+    target_link_libraries(fujinet crypt32)
+endif()
+
+
 target_include_directories(fujinet PRIVATE ${INCLUDE_DIRS} ${MBEDTLS_INCLUDE_DIR})
+target_link_libraries(fujinet ${CRYPTO_LIBS})
+
+if(DEFINED USE_LIBSERIAL)
+    pkg_search_module(LIBSERIALPORT REQUIRED libserialport)
+    target_include_directories(fujinet PRIVATE ${LIBSERIALPORT_INCLUDE_DIRS})
+    target_link_libraries(fujinet ${LIBSERIALPORT_LIBRARIES})
+    target_compile_options(fujinet PRIVATE ${LIBSERIALPORT_CFLAGS_OTHER})
+endif()
 
 # cJSON library
 # https://github.com/DaveGamble/cJSON
@@ -316,27 +476,25 @@ add_subdirectory(components_pc/libsmb2)
 add_subdirectory(components_pc/libssh)
 
 target_link_libraries(fujinet pthread expat cjson cjson_utils smb2 ssh)
-target_link_libraries(fujinet ${CRYPTO_LIBS})
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     target_link_libraries(fujinet ws2_32 bcrypt)
 endif()
 
-# TODO megre build_version.py with ESP version
-# # Version file
-
-# # run build_version.py to update version.h
-# add_custom_command(
-#   OUTPUT  "${CMAKE_BINARY_DIR}/version.h"
-#   DEPENDS build_version.py
-#   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-#   COMMAND python build_version.py
-#   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/include/version.h" "${CMAKE_BINARY_DIR}/version.h"
-#   COMMENT "Update version file"
-#   VERBATIM
-# )
-# add_custom_target(build_version DEPENDS "${CMAKE_BINARY_DIR}/version.h")
-# add_dependencies(fujinet build_version)
+# Version file
+# run build_version_pc.py to generate ${CMAKE_BINARY_DIR}/include/build_version.h
+add_custom_command(
+  OUTPUT  "${CMAKE_BINARY_DIR}/include/build_version.h"
+  DEPENDS build_version_pc.py "${CMAKE_SOURCE_DIR}/include/version.h"
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/include"
+  COMMAND python build_version_pc.py "${CMAKE_SOURCE_DIR}/include/version.h" "${CMAKE_BINARY_DIR}/include/build_version.h"
+  COMMENT "Create build_version.h file"
+  VERBATIM
+)
+add_custom_target(build_version DEPENDS "${CMAKE_BINARY_DIR}/include/build_version.h")
+add_dependencies(fujinet build_version)
+target_include_directories(fujinet PRIVATE "${CMAKE_BINARY_DIR}/include")
 
 # WebUI
 # "build_webui" target
@@ -361,7 +519,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
         COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:fujinet> dist
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILD_DATA_DIR} dist/data
         # DLL's TODO how to make this using cmake?
-        COMMAND ldd $<TARGET_FILE:fujinet> | grep -v -i '/windows' 
+        COMMAND ldd $<TARGET_FILE:fujinet> | grep -v -i '/windows'
         | awk '{print $$3}' | xargs -I {} cp -p {} dist
     )
 else()
@@ -372,6 +530,7 @@ else()
         COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:fujinet> dist
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${BUILD_DATA_DIR} dist/data
         COMMAND ${CMAKE_COMMAND} -E remove dist/run-fujinet.bat
+        COMMAND ${CMAKE_COMMAND} -E remove dist/run-fujinet.ps1
     )
 endif()
 add_dependencies(dist fujinet)
@@ -384,4 +543,7 @@ set_property(
 # include data cleanup in "clean" target
 set_property(
     DIRECTORY APPEND PROPERTY ADDITIONAL_CLEAN_FILES ${BUILD_DATA_DIR}
+)
+set_property(
+    DIRECTORY APPEND PROPERTY ADDITIONAL_CLEAN_FILES "${CMAKE_BINARY_DIR}/include"
 )

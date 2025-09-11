@@ -15,11 +15,14 @@ components:
   apetime: true
   udp_stream: true
   program_recorder: true
-  disk_swap: false
+  disk_swap: true
   boot_settings: true
   serial_port: true
   emulator_settings: true
   cpm_settings: true
+  pclink: true
 tweaks:
   # webui tweaks, if any
   fujinet_pc: true
+  platform: ATARI
+  config_ng: true

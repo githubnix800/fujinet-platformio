@@ -6,10 +6,10 @@
 #include <stdio.h>
 #include <cstdint>
 
+#include "fnio.h"
 
 #ifndef ESP_PLATFORM
 #include "compat_dirent.h"
-#include "fnFile.h"
 #endif
 
 #ifndef FILE_READ
@@ -37,10 +37,9 @@ enum fsType
     FSTYPE_LITTLEFS,
     FSTYPE_SDFAT,
     FSTYPE_TNFS,
-#ifndef ESP_PLATFORM
     FSTYPE_SMB,
     FSTYPE_FTP,
-#endif
+    FSTYPE_HTTP,
     FSTYPE_COUNT
 };
 
@@ -84,7 +83,7 @@ public:
     static const char *type_to_string(fsType type);
 
     static long filesize(FILE *);
-#ifndef ESP_PLATFORM
+#ifndef FNIO_IS_STDIO
     static long filesize(FileHandler *);
 #endif
     virtual long filesize(const char *path);
@@ -94,8 +93,15 @@ public:
     //virtual bool start()=0;
 
     virtual FILE * file_open(const char* path, const char* mode = FILE_READ) = 0;
-#ifndef ESP_PLATFORM
+#ifdef FNIO_IS_STDIO
+    fnFile * fnfile_open(const char* path, const char* mode = FILE_READ) {
+        return file_open(path, mode);
+    }
+#else
     virtual FileHandler * filehandler_open(const char* path, const char* mode = FILE_READ) = 0;
+    fnFile * fnfile_open(const char* path, const char* mode = FILE_READ) {
+        return filehandler_open(path, mode);
+    }
 #endif
 
     virtual bool exists(const char* path) = 0;

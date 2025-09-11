@@ -1,5 +1,8 @@
 #ifdef BUILD_APPLE
 
+#ifndef DEV_RELAY_SLIP
+#include "esp_heap_caps.h"
+#endif
 #include "mediaTypeWOZ.h"
 #include "../../include/debug.h"
 #include <string.h>
@@ -7,11 +10,13 @@
 #define WOZ1 '1'
 #define WOZ2 '2'
 
-#ifdef ESP_PLATFORM
-mediatype_t MediaTypeWOZ::mount(FILE *f, uint32_t disksize)
-#else
-mediatype_t MediaTypeWOZ::mount(FileHandler *f, uint32_t disksize)
-#endif
+bool MediaTypeWOZ::write_sector(int track, int sector, uint8_t *buffer)
+{
+  Debug_printf("\r\nWOZ disk needs to write sector!");
+  return false;
+}
+
+mediatype_t MediaTypeWOZ::mount(fnFile *f, uint32_t disksize)
 {
     _media_fileh = f;
     diskiiemulation = true;
@@ -50,19 +55,15 @@ void MediaTypeWOZ::unmount()
     MediaType::unmount();
     for (int i = 0; i < MAX_TRACKS; i++)
     {
-        if (trk_ptrs[i] != nullptr)
-            free(trk_ptrs[i]);
+        if (trk_data[i] != nullptr)
+            free(trk_data[i]);
     }
 }
 
 bool MediaTypeWOZ::wozX_check_header()
 {
     char hdr[12];
-#ifdef ESP_PLATFORM
-    fread(&hdr, sizeof(char), 12, _media_fileh);
-#else
-    _media_fileh->read(&hdr, sizeof(char), 12);
-#endif
+    fnio::fread(&hdr, sizeof(char), 12, _media_fileh);
     if (hdr[0] == 'W' && hdr[1] == 'O' && hdr[2] == 'Z')
     {
         woz_version = hdr[3];
@@ -75,9 +76,13 @@ bool MediaTypeWOZ::wozX_check_header()
     }
     // check for file integrity
     if ((unsigned char)(hdr[4]) == 0xFF && hdr[5] == 0x0A && hdr[6] == 0x0D && hdr[7] == 0x0A)
+    {
         Debug_printf("\n8-bit binary file verified");
+    }
     else
+    {
         return true;
+    }
 
     // could check CRC if one wanted
     
@@ -86,29 +91,17 @@ bool MediaTypeWOZ::wozX_check_header()
 
 bool MediaTypeWOZ::wozX_read_info()
 {
-#ifdef ESP_PLATFORM
-    if (fseek(_media_fileh, 12, SEEK_SET))
-#else
-    if (_media_fileh->seek(12, SEEK_SET))
-#endif
+    if (fnio::fseek(_media_fileh, 12, SEEK_SET))
     {
         Debug_printf("\nError seeking INFO chunk");
         return true;
     }
     uint32_t chunk_id, chunk_size;
-#ifdef ESP_PLATFORM
-    fread(&chunk_id, sizeof(chunk_id), 1, _media_fileh);
-    Debug_printf("\nINFO Chunk ID: %08x", chunk_id);
-    fread(&chunk_size, sizeof(chunk_size), 1, _media_fileh);
-    Debug_printf("\nINFO Chunk size: %d", chunk_size);
-    Debug_printf("\nNow at byte %d", ftell(_media_fileh));
-#else
-    _media_fileh->read(&chunk_id, sizeof(chunk_id), 1);
-    Debug_printf("\nINFO Chunk ID: %08x", chunk_id);
-    _media_fileh->read(&chunk_size, sizeof(chunk_size), 1);
-    Debug_printf("\nINFO Chunk size: %d", chunk_size);
-    Debug_printf("\nNow at byte %d", _media_fileh->tell());
-#endif
+    fnio::fread(&chunk_id, sizeof(chunk_id), 1, _media_fileh);
+    Debug_printf("\nINFO Chunk ID: %08lx", chunk_id);
+    fnio::fread(&chunk_size, sizeof(chunk_size), 1, _media_fileh);
+    Debug_printf("\nINFO Chunk size: %lu", chunk_size);
+    Debug_printf("\nNow at byte %lu", fnio::ftell(_media_fileh));
     // could read a whole bunch of other stuff  ...
 
     switch (woz_version)
@@ -121,27 +114,15 @@ bool MediaTypeWOZ::wozX_read_info()
         // but jump to offset 44 to get the track size
         {
             // jump to offset 39 to get bit timing
-#ifdef ESP_PLATFORM
-            fseek(_media_fileh, 39, SEEK_CUR);
+            fnio::fseek(_media_fileh, 39, SEEK_CUR);
             uint8_t bit_timing;
-            fread(&bit_timing, sizeof(uint8_t), 1, _media_fileh);
+            fnio::fread(&bit_timing, sizeof(uint8_t), 1, _media_fileh);
             optimal_bit_timing = bit_timing;
             Debug_printf("\nWOZ2 Optimal Bit Timing = 125 ns X %d = %d ns",optimal_bit_timing, (int)optimal_bit_timing * 125);
             // and jump to offset 44 to get the track size
-            fseek(_media_fileh, 4, SEEK_CUR);
+            fnio::fseek(_media_fileh, 4, SEEK_CUR);
             uint16_t largest_track;
-            fread(&largest_track, sizeof(uint16_t), 1, _media_fileh);
-#else
-            _media_fileh->seek(39, SEEK_CUR);
-            uint8_t bit_timing;
-            _media_fileh->read(&bit_timing, sizeof(uint8_t), 1);
-            optimal_bit_timing = bit_timing;
-            Debug_printf("\nWOZ2 Optimal Bit Timing = 125 ns X %d = %d ns",optimal_bit_timing, (int)optimal_bit_timing * 125);
-            // and jump to offset 44 to get the track size
-            _media_fileh->seek(4, SEEK_CUR);
-            uint16_t largest_track;
-            _media_fileh->read(&largest_track, sizeof(uint16_t), 1);
-#endif
+            fnio::fread(&largest_track, sizeof(uint16_t), 1, _media_fileh);
             num_blocks = largest_track;
         }
         break;
@@ -155,34 +136,20 @@ bool MediaTypeWOZ::wozX_read_info()
 
 bool MediaTypeWOZ::wozX_read_tmap()
 { // read TMAP
-#ifdef ESP_PLATFORM
-    if (fseek(_media_fileh, 80, SEEK_SET))
-#else
-    if (_media_fileh->seek(80, SEEK_SET))
-#endif
+    if (fnio::fseek(_media_fileh, 80, SEEK_SET))
     {
         Debug_printf("\nError seeking TMAP chunk");
         return true;
     }
 
     uint32_t chunk_id, chunk_size;
-#ifdef ESP_PLATFORM
-    fread(&chunk_id, sizeof(chunk_id), 1, _media_fileh);
-    Debug_printf("\nTMAP Chunk ID: %08x", chunk_id);
-    fread(&chunk_size, sizeof(chunk_size), 1, _media_fileh);
-    Debug_printf("\nTMAP Chunk size: %d", chunk_size);
-    Debug_printf("\nNow at byte %d", ftell(_media_fileh));
+    fnio::fread(&chunk_id, sizeof(chunk_id), 1, _media_fileh);
+    Debug_printf("\nTMAP Chunk ID: %08lx", chunk_id);
+    fnio::fread(&chunk_size, sizeof(chunk_size), 1, _media_fileh);
+    Debug_printf("\nTMAP Chunk size: %lu", chunk_size);
+    Debug_printf("\nNow at byte %lu", fnio::ftell(_media_fileh));
 
-    fread(&tmap, sizeof(tmap[0]), MAX_TRACKS, _media_fileh);
-#else
-    _media_fileh->read(&chunk_id, sizeof(chunk_id), 1);
-    Debug_printf("\nTMAP Chunk ID: %08x", chunk_id);
-    _media_fileh->read(&chunk_size, sizeof(chunk_size), 1);
-    Debug_printf("\nTMAP Chunk size: %d", chunk_size);
-    Debug_printf("\nNow at byte %d", _media_fileh->tell());
-
-    _media_fileh->read(&tmap, sizeof(tmap[0]), MAX_TRACKS);
-#endif
+    fnio::fread(&tmap, sizeof(tmap[0]), MAX_TRACKS, _media_fileh);
 #ifdef DEBUG
     Debug_printf("\nTrack, Index");
     for (int i = 0; i < MAX_TRACKS; i++)
@@ -194,93 +161,85 @@ bool MediaTypeWOZ::wozX_read_tmap()
 
 bool MediaTypeWOZ::woz1_read_tracks()
 {    // depend upon little endian-ness
-#ifdef ESP_PLATFORM
-    fseek(_media_fileh, 256, SEEK_SET);
-#else
-    _media_fileh->seek(256, SEEK_SET);
-#endif
-
-    // woz1 track data organized as:
-    // Offset	Size	    Name	        Usage
-    // +0	    6646 bytes  Bitstream	    The bitstream data padded out to 6646 bytes
-    // +6646	uint16	    Bytes Used	    The actual byte count for the bitstream.
-    // +6648	uint16	    Bit Count	    The number of bits in the bitstream.
-    // +6650	uint16	    Splice Point	Index of first bit after track splice (write hint). If no splice information is provided, then will be 0xFFFF.
-    // +6652	uint8	    Splice Nibble	Nibble value to use for splice (write hint).
-    // +6653	uint8	    Splice Bit Count	Bit count of splice nibble (write hint).
-    // +6654	uint16		Reserved for future use.
+    fnio::fseek(_media_fileh, 256, SEEK_SET);
 
     Debug_printf("\nStart Block, Block Count, Bit Count");
     
 #ifdef ESP_PLATFORM
-    uint8_t *temp_ptr = (uint8_t *)heap_caps_malloc(WOZ1_NUM_BLKS * 512, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    TRK_bitstream *bitstream = (TRK_bitstream *) heap_caps_malloc(BITSTREAM_ALLOC_SIZE(WOZ1_TRACK_LEN), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
 #else
-    uint8_t *temp_ptr = (uint8_t *)malloc(WOZ1_NUM_BLKS * 512);
+    TRK_bitstream *bitstream = (TRK_bitstream *) malloc(BITSTREAM_ALLOC_SIZE(WOZ1_TRACK_LEN));
 #endif
     uint16_t bytes_used;
     uint16_t bit_count;
+    uint8_t data[WOZ1_TRACK_LEN];
 
     for (int i = 0; i < MAX_TRACKS; i++)
     {
-        memset(temp_ptr, 0, WOZ1_NUM_BLKS * 512);
-#ifdef ESP_PLATFORM
-        fread(temp_ptr, 1, WOZ1_TRACK_LEN, _media_fileh);
-        fread(&bytes_used, sizeof(bytes_used), 1, _media_fileh);
-        fread(&bit_count, sizeof(bit_count), 1, _media_fileh);
-#else
-        _media_fileh->read(temp_ptr, 1, WOZ1_TRACK_LEN);
-        _media_fileh->read(&bytes_used, sizeof(bytes_used), 1);
-        _media_fileh->read(&bit_count, sizeof(bit_count), 1);
-#endif
-        trks[i].block_count = bytes_used / 512;
-        if (bytes_used % 512)
-            trks[i].block_count++;
-        trks[i].bit_count = bit_count;
+
+        // woz1 track data organized as:
+        // Offset  Size        Name              Usage
+        // +0      6646 bytes  Bitstream         The bitstream data padded out to 6646 bytes
+        // +6646   uint16      Bytes Used        The actual byte count for the bitstream.
+        // +6648   uint16      Bit Count         The number of bits in the bitstream.
+        // +6650   uint16      Splice Point      Index of first bit after track splice
+        //                                       (write hint). If no splice information is
+        //                                       provided, then will be 0xFFFF.
+        // +6652   uint8       Splice Nibble     Nibble value to use for splice (write hint).
+        // +6653   uint8       Splice Bit Count  Bit count of splice nibble (write hint).
+        // +6654   uint16      Reserved for future use.
+
+        fnio::fread(data, 1, WOZ1_TRACK_LEN, _media_fileh);
+        fnio::fread(&bytes_used, sizeof(bytes_used), 1, _media_fileh);
+        fnio::fread(&bit_count, sizeof(bit_count), 1, _media_fileh);
         if (bit_count > 0)
         {
-            size_t s = trks[i].block_count * 512;
 #ifdef ESP_PLATFORM
-            trk_ptrs[i] = (uint8_t *)heap_caps_malloc(s, MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+            TRK_bitstream *bitstream = (TRK_bitstream *) heap_caps_malloc(BITSTREAM_ALLOC_SIZE(WOZ1_TRACK_LEN), MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
 #else
-            trk_ptrs[i] = (uint8_t *)malloc(s);
+            TRK_bitstream *bitstream = (TRK_bitstream *) malloc(BITSTREAM_ALLOC_SIZE(WOZ1_TRACK_LEN));
 #endif
-            if (trk_ptrs[i] != nullptr)
+            if (bitstream != nullptr)
             {
-                Debug_printf("\nStoring %d bytes of track %d into location %lu", bytes_used, i, trk_ptrs[i]);
-                memset(trk_ptrs[i],0,s);
-                memcpy(trk_ptrs[i], temp_ptr, bytes_used);
+                memset(bitstream, 0, BITSTREAM_ALLOC_SIZE(WOZ1_TRACK_LEN));
+                bitstream->len_bytes = bytes_used;
+                bitstream->len_bits = bit_count;
+                bitstream->len_blocks = (bitstream->len_bytes + 511) / 512;
+                trk_data[i] = bitstream;
+                Debug_printf("\nStoring %d bytes of track %d into location %lx", bytes_used, i, trk_data[i]);
+                memcpy(bitstream->data, data, bytes_used);
             }
             else
             {
                 Debug_printf("\nNo RAM allocated!");
-                free(temp_ptr);
                 return true;
             }
         }
         else
         {
-            trk_ptrs[i] = nullptr;
+            trk_data[i] = nullptr;
             Debug_printf("\nTrack %d is blank!",i);
         }
-#ifdef ESP_PLATFORM
-        fread(temp_ptr, 1, 6, _media_fileh); // read through rest of bytes in track
-#else
-        _media_fileh->read(temp_ptr, 1, 6); // read through rest of bytes in track
-#endif
+        fnio::fread(bitstream, 1, 6, _media_fileh); // read through rest of bytes in track
     }
-    free(temp_ptr);
+    free(bitstream);
     return false;
 }
 
+struct WOZ2_TRK_t
+{
+    uint16_t start_block;
+    uint16_t block_count;
+    uint32_t bit_count;
+};
+
 bool MediaTypeWOZ::woz2_read_tracks()
 {    // depend upon little endian-ness
-#ifdef ESP_PLATFORM
-    fseek(_media_fileh, 256, SEEK_SET);
-    fread(&trks, sizeof(TRK_t), MAX_TRACKS, _media_fileh);
-#else
-    _media_fileh->seek(256, SEEK_SET);
-    _media_fileh->read(&trks, sizeof(TRK_t), MAX_TRACKS);
-#endif
+    WOZ2_TRK_t trks[MAX_TRACKS];
+
+
+    fnio::fseek(_media_fileh, 256, SEEK_SET);
+    fnio::fread(trks, sizeof(WOZ2_TRK_t), MAX_TRACKS, _media_fileh);
 #ifdef DEBUG
     Debug_printf("\nStart Block, Block Count, Bit Count");
     for (int i=0; i<MAX_TRACKS; i++)
@@ -289,24 +248,23 @@ bool MediaTypeWOZ::woz2_read_tracks()
     // read WOZ tracks into RAM
     for (int i=0; i<MAX_TRACKS; i++)
     {
-        size_t s = trks[i].block_count * 512;
+        size_t s = std::max(trks[i].block_count * 512, WOZ1_TRACK_LEN);
         if (s != 0)
         {
 #ifdef ESP_PLATFORM
-            trk_ptrs[i] = (uint8_t *)heap_caps_malloc(s, MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+            TRK_bitstream *bitstream = (TRK_bitstream *) heap_caps_malloc(BITSTREAM_ALLOC_SIZE(s), MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
 #else
-            trk_ptrs[i] = (uint8_t *)malloc(s);
+            TRK_bitstream *bitstream = (TRK_bitstream *) malloc(BITSTREAM_ALLOC_SIZE(s));
 #endif
-            if (trk_ptrs[i] != nullptr)
+            if (bitstream != nullptr)
             {
-                Debug_printf("\nReading %d bytes of track %d into location %lu", s, i, trk_ptrs[i]);
-#ifdef ESP_PLATFORM
-                fseek(_media_fileh, trks[i].start_block * 512, SEEK_SET);
-                fread(trk_ptrs[i], 1, s, _media_fileh);
-#else
-                _media_fileh->seek(trks[i].start_block * 512, SEEK_SET);
-                _media_fileh->read(trk_ptrs[i], 1, s);
-#endif
+                Debug_printf("\nReading %d bytes of track %d into location %lx", s, i, trk_data[i]);
+                fnio::fseek(_media_fileh, trks[i].start_block * 512, SEEK_SET);
+                fnio::fread(bitstream->data, 1, s, _media_fileh);
+                bitstream->len_blocks = trks[i].block_count;
+                bitstream->len_bytes = s;
+                bitstream->len_bits = trks[i].bit_count;
+                trk_data[i] = bitstream;
                 Debug_printf("\n%d, %d, %lu", trks[i].start_block, trks[i].block_count, trks[i].bit_count);
             }
             else

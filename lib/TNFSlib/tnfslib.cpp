@@ -1,8 +1,10 @@
 
 #include "tnfslib.h"
 
+#include <cstdlib>
 #include <sys/stat.h>
 #include <errno.h>
+#include <mutex>
 #include "compat_string.h"
 
 #include "../../include/debug.h"
@@ -10,6 +12,8 @@
 #include "fnSystem.h"
 #include "../bus/bus.h"
 #include "fnUDP.h"
+#include "fnTcpClient.h"
+#include "tnfslib_udp.h"
 
 #include "utils.h"
 
@@ -25,10 +29,30 @@
 #define ENODATA 61
 #endif
 
+typedef enum
+{
+    SUCCESS,
+    FAILED,
+    RESET,
+} _tnfs_send_recv_result;
+
+typedef enum
+{
+    RESP_VALID,
+    RESP_INVALID,
+    RESP_TRY_AGAIN,
+    SESSION_RECOVERED,
+    NO_RESP,
+} _tnfs_recv_result;
+
 bool _tnfs_transaction(tnfsMountInfo *m_info, tnfsPacket &pkt, uint16_t datalen);
-#ifndef ESP_PLATFORM
+bool _tnfs_send(fnUDP *udp, tnfsMountInfo *m_info, tnfsPacket &pkt, uint16_t payload_size);
+int _tnfs_recv(fnUDP *udp, tnfsMountInfo *m_info, tnfsPacket &pkt);
+bool _tnfs_tcp_send(tnfsMountInfo *m_info, tnfsPacket &pkt, uint16_t payload_size);
+int _tnfs_tcp_recv(tnfsMountInfo *m_info, tnfsPacket &pkt);
+_tnfs_send_recv_result _tnfs_send_recv(fnUDP &udp, tnfsMountInfo *m_info, tnfsPacket &req_pkt, uint16_t payload_size, tnfsPacket &res_pkt);
+_tnfs_recv_result _tnfs_recv_and_validate(fnUDP &udp, tnfsMountInfo *m_info, tnfsPacket &req_pkt, uint16_t payload_size, tnfsPacket &res_pkt);
 uint8_t _tnfs_session_recovery(tnfsMountInfo *m_info, uint8_t command);
-#endif
 
 int _tnfs_adjust_with_full_path(tnfsMountInfo *m_info, char *buffer, const char *source, int bufflen);
 
@@ -210,7 +234,7 @@ int tnfs_open(tnfsMountInfo *m_info, const char *filepath, uint16_t open_mode, u
                 else if (open_mode & TNFS_OPENMODE_WRITE_TRUNCATE)
                     pFileInf->file_size = 0;
             }
-            Debug_printf("File opened, handle ID: %hd, size: %u, pos: %u\r\n", *file_handle, pFileInf->file_size, pFileInf->file_position);
+            Debug_printf("File opened, handle ID: %hd, size: %lu, pos: %lu\r\n", *file_handle, pFileInf->file_size, pFileInf->file_position);
         }
         result = packet.payload[0];
     }
@@ -250,20 +274,19 @@ int tnfs_close(tnfsMountInfo *m_info, int16_t file_handle)
     return -1;
 }
 
-#ifdef DEBUG
+// #ifdef not needed, the linker optimization includes the code only if called from somewhere
 void _tnfs_cache_dump(const char *title, uint8_t *cache, uint32_t cache_size)
 {
     int bytes_per_line = 16;
-    Debug_printf("\n%s %u\r\n", title, cache_size);
+    Debug_printf("\n%s %lu\r\n", title, cache_size);
     for (int j = 0; j < cache_size; j += bytes_per_line)
     {
         for (int k = 0; (k + j) < cache_size && k < bytes_per_line; k++)
             Debug_printf("%02X ", cache[k + j]);
-        Debug_println("");
+        Debug_println("\r\n");
     }
-    Debug_println("");
+    Debug_println("\r\n");
 }
-#endif
 
 /*
  Fills destination buffer with data available in internal cache, if any
@@ -272,7 +295,7 @@ void _tnfs_cache_dump(const char *title, uint8_t *cache, uint32_t cache_size)
 int _tnfs_read_from_cache(tnfsFileHandleInfo *pFHI, uint8_t *dest, uint16_t dest_size, uint16_t *dest_used)
 {
     #ifdef VERBOSE_TNFS
-    Debug_printf("_tnfs_read_from_cache: buffpos=%d, cache_start=%d, cache_avail=%d, dest_size=%d, dest_used=%d\r\n",
+    Debug_printf("_tnfs_read_from_cache: buffpos=%lu, cache_start=%lu, cache_avail=%lu, dest_size=%u, dest_used=%u\r\n",
                  pFHI->cached_pos, pFHI->cache_start, pFHI->cache_available, dest_size, *dest_used);
     #endif
 
@@ -347,7 +370,7 @@ int _tnfs_fill_cache(tnfsMountInfo *m_info, tnfsFileHandleInfo *pFHI)
     // Note that when we're filling the cache, we're dealing with the "real" file position,
     // not the cached_position we also keep track of on behalf of the client
     #ifdef VERBOSE_TNFS
-    Debug_printf("_TNFS_FILL_CACHE fh=%d, file_position=%d\r\n", pFHI->handle_id, pFHI->file_position);
+    Debug_printf("_TNFS_FILL_CACHE fh=%d, file_position=%lu\r\n", pFHI->handle_id, pFHI->file_position);
     #endif
 
     int error = 0;
@@ -393,7 +416,7 @@ int _tnfs_fill_cache(tnfsMountInfo *m_info, tnfsFileHandleInfo *pFHI)
                 bytes_remaining_to_load -= bytes_read;
 
                 #ifdef VERBOSE_TNFS
-                Debug_printf("_tnfs_fill_cache got %u bytes, %u more bytes needed\r\n", bytes_read, bytes_remaining_to_load);
+                Debug_printf("_tnfs_fill_cache got %u bytes, %lu more bytes needed\r\n", bytes_read, bytes_remaining_to_load);
                 #endif
             }
             else if(tnfs_result == TNFS_RESULT_END_OF_FILE)
@@ -741,7 +764,7 @@ void _readdirx_fill_response(tnfsDirCacheEntry *pCached, tnfsStat *filestat, cha
         strftime(t_m, sizeof(t_m), tfmt, localtime(&tt));
         tt = filestat->c_time;
         strftime(t_c, sizeof(t_c), tfmt, localtime(&tt));
-        Debug_printf("\t_readdirx_fill_response: dir: %s, size: %u, mtime: %s, ctime: %s \"%s\"\r\n",
+        Debug_printf("\t_readdirx_fill_response: dir: %s, size: %lu, mtime: %s, ctime: %s \"%s\"\r\n",
             filestat->isDir ? "Yes" : "no",
             filestat->filesize, t_m, t_c, dir_entry );
     }
@@ -1226,6 +1249,122 @@ const char *tnfs_getcwd(tnfsMountInfo *m_info)
 // ------------------------------------------------
 
 /*
+    Send the packet, using UDP or TCP, depending on the m_info.
+    Reports whether the operation was successful.
+
+    If TCP is used and there's no connection, try to connect first.
+*/
+bool _tnfs_send(fnUDP *udp, tnfsMountInfo *m_info, tnfsPacket &pkt, uint16_t payload_size)
+{
+    if (m_info->protocol == TNFS_PROTOCOL_UNKNOWN)
+    {
+        bool success = _tnfs_tcp_send(m_info, pkt, payload_size);
+        if (!success)
+        {
+            Debug_println("Can't connect to the TCP server; falling back to UDP.");
+            m_info->protocol = TNFS_PROTOCOL_UDP;
+            return _tnfs_udp_send(udp, m_info, pkt, payload_size);
+        }
+        return success;
+    }
+    else if (m_info->protocol == TNFS_PROTOCOL_TCP)
+    {
+        return _tnfs_tcp_send(m_info, pkt, payload_size);
+    }
+    else
+    {
+        return _tnfs_udp_send(udp, m_info, pkt, payload_size);
+    }
+}
+
+bool _tnfs_tcp_send(tnfsMountInfo *m_info, tnfsPacket &pkt, uint16_t payload_size)
+{
+    fnTcpClient *tcp = &m_info->tcp_client;
+    if (!tcp->connected())
+    {
+        bool success = false;
+        if (m_info->host_ip != IPADDR_NONE)
+            success = tcp->connect(m_info->host_ip, m_info->port, TNFS_TIMEOUT);
+        else
+            success = tcp->connect(m_info->hostname, m_info->port, TNFS_TIMEOUT);
+        if (!success)
+        {
+            Debug_println("Can't connect to the TCP server");
+            return false;
+        }
+    }
+    int l = tcp->write(pkt.rawData, payload_size + TNFS_HEADER_SIZE);
+    return l == payload_size + TNFS_HEADER_SIZE;
+}
+
+#ifndef TNFS_UDP_SIMULATE_POOR_CONNECTION
+bool _tnfs_udp_send(fnUDP *udp, tnfsMountInfo *m_info, tnfsPacket &pkt, uint16_t payload_size)
+{
+    return _tnfs_udp_do_send(udp, m_info, pkt, payload_size);
+}
+#endif
+
+bool _tnfs_udp_do_send(fnUDP *udp, tnfsMountInfo *m_info, tnfsPacket &pkt, uint16_t payload_size)
+{
+    bool sent;
+    // Use the IP address if we have it
+    if (m_info->host_ip != IPADDR_NONE)
+        sent = udp->beginPacket(m_info->host_ip, m_info->port);
+    else
+        sent = udp->beginPacket(m_info->hostname, m_info->port);
+
+    if (sent)
+    {
+        udp->write(pkt.rawData, payload_size + TNFS_HEADER_SIZE); // Add the data payload along with 4 bytes of TNFS header
+        sent = udp->endPacket();
+    }
+    return sent;
+}
+
+/*
+    Receive the packet, using UDP or TCP, depending on the m_info.
+    Return the number of received bytes or an negative value if the
+    packet is not available or an error occurred.
+*/
+int _tnfs_recv(fnUDP *udp, tnfsMountInfo *m_info, tnfsPacket &pkt)
+{
+    if (m_info->protocol == TNFS_PROTOCOL_TCP || m_info->protocol == TNFS_PROTOCOL_UNKNOWN)
+    {
+        return _tnfs_tcp_recv(m_info, pkt);
+    }
+    else
+    {
+        return _tnfs_udp_recv(udp, m_info, pkt);
+    }
+}
+
+int _tnfs_tcp_recv(tnfsMountInfo *m_info, tnfsPacket &pkt)
+{
+    fnTcpClient *tcp = &m_info->tcp_client;
+    if (!tcp->connected())
+    {
+        return -1;
+    }
+    if (!tcp->available())
+    {
+        return -1;
+    }
+    return tcp->read(pkt.rawData, sizeof(pkt.rawData));
+}
+
+#ifndef TNFS_UDP_SIMULATE_POOR_CONNECTION
+int _tnfs_udp_recv(fnUDP *udp, tnfsMountInfo *m_info, tnfsPacket &pkt)
+{
+    if (!udp->parsePacket())
+    {
+        return -1;
+    }
+    int len = udp->read(pkt.rawData, sizeof(pkt.rawData));
+    return len;
+}
+#endif
+
+/*
   Send constructed TNFS packet and check for reply
   The send/receive loop will be attempted tnfsPacket.max_retries times (default: TNFS_RETRIES)
   Each retry attempt is limited to tnfsPacket.timeout_ms (default: TNFS_TIMEOUT)
@@ -1240,154 +1379,185 @@ const char *tnfs_getcwd(tnfsMountInfo *m_info)
  */
 bool _tnfs_transaction(tnfsMountInfo *m_info, tnfsPacket &pkt, uint16_t payload_size)
 {
+    std::lock_guard<std::recursive_mutex> lock(m_info->transaction_mutex);
+
     fnUDP udp;
 
-#ifndef ESP_PLATFORM
-// TODO review session recovery
-    // Keep copy of 1st payload byte
-    uint8_t payload_0 = pkt.payload[0];
-#endif
     // Set our session ID
-    pkt.session_idl = TNFS_LOBYTE_FROM_UINT16(m_info->session);
-    pkt.session_idh = TNFS_HIBYTE_FROM_UINT16(m_info->session);
+    tnfsPacket reqPkt = pkt;
+    reqPkt.session_idl = TNFS_LOBYTE_FROM_UINT16(m_info->session);
+    reqPkt.session_idh = TNFS_HIBYTE_FROM_UINT16(m_info->session);
 
     // Set sequence number before the transaction loop
-    pkt.sequence_num = m_info->current_sequence_num++;
+    reqPkt.sequence_num = m_info->current_sequence_num++;
 
     // Start a new retry sequence
-    int retry = 0;
-    while (retry < m_info->max_retries)
+    for (int retry = 0; retry < m_info->max_retries; retry++)
     {
-#ifdef DEBUG
-        _tnfs_debug_packet(pkt, payload_size);
-#endif
-
-        // Send packet
-        bool sent = false;
-        // Use the IP address if we have it
-        if (m_info->host_ip != IPADDR_NONE)
-            sent = udp.beginPacket(m_info->host_ip, m_info->port);
-        else
-            sent = udp.beginPacket(m_info->hostname, m_info->port);
-
-        if (sent)
+        switch(_tnfs_send_recv(udp, m_info, reqPkt, payload_size, pkt))
         {
-            udp.write(pkt.rawData, payload_size + TNFS_HEADER_SIZE); // Add the data payload along with 4 bytes of TNFS header
-            sent = udp.endPacket();
+            case SUCCESS:
+            return true;
+
+            case RESET:
+            retry = -1;
+            continue;
+
+            case FAILED:
+            default:
+            // fallback to retry
+            break;
         }
-
-        if (!sent)
-        {
-            Debug_println("Failed to send packet - retrying");
-        }
-        else
-        {
-            // Wait for a response at most TNFS_TIMEOUT milliseconds
-#ifdef ESP_PLATFORM
-            int ms_start = fnSystem.millis();
-#else
-            uint64_t ms_start = fnSystem.millis();
-#endif
-            uint8_t current_sequence_num = pkt.sequence_num;
-            do
-            {
-                if (SYSTEM_BUS.getShuttingDown())
-                {
-                    Debug_println("TNFS Breakout due to Shutdown");
-                    return true; // false success just to get out
-                }
-
-#ifndef ESP_PLATFORM
-                fnSystem.delay_microseconds(2000); // wait short time for (local) data to arrive
-#endif
-                if (udp.parsePacket())
-                {
-                    unsigned short l = udp.read(pkt.rawData, sizeof(pkt.rawData));
-                    __IGNORE_UNUSED_VAR(l);
-#ifdef DEBUG
-                    _tnfs_debug_packet(pkt, l, true);
-#endif
-
-                    // Out of order packet received.
-                    if (pkt.sequence_num != current_sequence_num)
-                    {
-                        Debug_printf("TNFS OUT OF ORDER SEQUENCE! Rcvd: %x, Expected: %x\r\n", pkt.sequence_num, current_sequence_num);
-                        // Fall through and let retry logic handle it.
-                    }
-                    else
-                    {
-                        // Check in case the server asks us to wait and try again
-                        if (pkt.payload[0] == TNFS_RESULT_TRY_AGAIN)
-                        {
-                            // Server should tell us how long it wants us to wait
-                            uint16_t backoffms = TNFS_UINT16_FROM_LOHI_BYTEPTR(pkt.payload + 1);
-                            Debug_printf("Server asked us to TRY AGAIN after %ums\r\n", backoffms);
-                            if (backoffms > TNFS_MAX_BACKOFF_DELAY)
-                                backoffms = TNFS_MAX_BACKOFF_DELAY;
-                            fnSystem.delay(backoffms);
-                        }
-#ifndef ESP_PLATFORM
-// TODO review session recovery
-                        // Check for invalid (expired) session
-                        else if (pkt.payload[0] == TNFS_RESULT_INVALID_HANDLE \
-                                 && pkt.command != TNFS_CMD_MOUNT \
-                                 && pkt.command != TNFS_CMD_UNMOUNT)
-                        {
-                            Debug_printf("_tnfs_transaction - Invalid session ID\n");
-                            // Recovery - start new session with server, i.e. remount
-                            uint8_t res = _tnfs_session_recovery(m_info, pkt.command);
-                            if (res != TNFS_RESULT_SUCCESS)
-                            {
-                                // update the result byte (TNFS_RESULT_INVALID_HANDLE or TNFS_RESULT_BAD_FILENUM)
-                                pkt.payload[0] = res;
-                                return true;
-                            }
-                            // retry the command using new session
-                            pkt.session_idl = TNFS_LOBYTE_FROM_UINT16(m_info->session);
-                            pkt.session_idh = TNFS_HIBYTE_FROM_UINT16(m_info->session);
-                            pkt.payload[0] = payload_0; // restore first byte of payload
-                            retry = -1; // reset retry counter, will be checked later
-                            // get out of packet receive loop
-                            break;
-                        }
-#endif
-                        else
-                        {
-#ifndef ESP_PLATFORM
-                            Debug_printf("_tnfs_transaction completed in %u ms\n", (unsigned)(fnSystem.millis() - ms_start));
-#endif
-                            return true;
-                        }
-                    }
-                }
-#ifdef ESP_PLATFORM
-                fnSystem.yield();
-#else
-                fnSystem.delay_microseconds(5000); // wait more time for (remote) data to arrive
-#endif
-
-            } while ((fnSystem.millis() - ms_start) < m_info->timeout_ms); // packet receive loop
-
-            if (retry >= 0)
-            {
-                Debug_printf("Timeout after %d milliseconds. Retrying\r\n", m_info->timeout_ms);
-            }
-        }
-
-        if (retry >= 0)
-        {
-            // Make sure we wait before retrying
-            fnSystem.delay(m_info->min_retry_ms);
-        }
-        retry++;
+        
+        // Make sure we wait before retrying
+        fnSystem.delay(m_info->min_retry_ms);
     }
 
-    Debug_println("Retry attempts failed");
+    Debug_printf("Retry attempts failed for host: %s, path: %s, cwd: %s\r\n", m_info->hostname, m_info->mountpath, m_info->current_working_directory);
 
     return false;
 }
 
+_tnfs_send_recv_result _tnfs_send_recv(fnUDP &udp, tnfsMountInfo *m_info, tnfsPacket &req_pkt, uint16_t payload_size, tnfsPacket &res_pkt)
+{
+#ifdef DEBUG
+    _tnfs_debug_packet(req_pkt, payload_size);
+#endif
+
+    // Send packet
+    bool sent = _tnfs_send(&udp, m_info, req_pkt, payload_size);
+    if (!sent)
+    {
+        Debug_println("Failed to send packet - retrying");
+        return FAILED;
+    }
+
+    // Wait for a response at most TNFS_TIMEOUT milliseconds
+#ifdef ESP_PLATFORM
+    int ms_start = fnSystem.millis();
+#else
+    uint64_t ms_start = fnSystem.millis();
+#endif
+    do
+    {
+        if (SYSTEM_BUS.getShuttingDown())
+        {
+            Debug_println("TNFS Breakout due to Shutdown");
+            return SUCCESS; // false success just to get out
+        }
+
+        switch(_tnfs_recv_and_validate(udp, m_info, req_pkt, payload_size, res_pkt))
+        {
+            case RESP_VALID:
 #ifndef ESP_PLATFORM
+            Debug_printf("_tnfs_transaction completed in %u ms\n", (unsigned)(fnSystem.millis() - ms_start));
+#endif
+            return SUCCESS;
+
+            case RESP_TRY_AGAIN:
+            return FAILED;
+
+            case RESP_INVALID:
+            return FAILED;
+
+            case SESSION_RECOVERED:
+            return RESET;
+
+            case NO_RESP:
+            default:
+            break;
+        }
+
+#ifdef ESP_PLATFORM
+        fnSystem.yield();
+#else
+        fnSystem.delay_microseconds(5000); // wait more time for (remote) data to arrive
+#endif
+
+    } while ((fnSystem.millis() - ms_start) < m_info->timeout_ms); // packet receive loop
+
+    if (m_info->protocol == TNFS_PROTOCOL_UNKNOWN)
+    {
+        // This is probably an old tcpd server, accepting TCP connections but not responding
+        // to any commands. We should fall back to UDP too and don't count this iteration
+        // in the retry counter.
+        Debug_println("No response to TCP mount request; falling back to UDP.");
+        m_info->protocol = TNFS_PROTOCOL_UDP;
+        return RESET;
+    }
+    
+    Debug_printf("Timeout after %d milliseconds. Retrying\r\n", m_info->timeout_ms);
+    return FAILED;
+}
+
+_tnfs_recv_result _tnfs_recv_and_validate(fnUDP &udp, tnfsMountInfo *m_info, tnfsPacket &req_pkt, uint16_t payload_size, tnfsPacket &res_pkt)
+{
+#ifndef ESP_PLATFORM
+    fnSystem.delay_microseconds(2000); // wait short time for (local) data to arrive
+#endif
+    int l = _tnfs_recv(&udp, m_info, res_pkt);
+    if (l < 0)
+    {
+        return NO_RESP;
+    }
+#ifdef DEBUG
+    _tnfs_debug_packet(res_pkt, l, true);
+#endif
+    if (m_info->protocol == TNFS_PROTOCOL_UNKNOWN)
+    {
+        Debug_println("TNFS server supports TCP.");
+        m_info->protocol = TNFS_PROTOCOL_TCP;
+    }
+
+    // Delayed response for the previous request. We should just try to recv the next response.
+    if (res_pkt.sequence_num < req_pkt.sequence_num)
+    {
+        Debug_printf("Received delayed response! Rcvd: %x, Expected: %x\r\n", res_pkt.sequence_num, req_pkt.sequence_num);
+        return NO_RESP;
+    }
+
+    // Out of order packet received.
+    if (res_pkt.sequence_num != req_pkt.sequence_num)
+    {
+        Debug_printf("TNFS OUT OF ORDER SEQUENCE! Rcvd: %x, Expected: %x\r\n", res_pkt.sequence_num, req_pkt.sequence_num);
+        return RESP_INVALID;
+    }
+
+    // Check in case the server asks us to wait and try again
+    if (res_pkt.payload[0] == TNFS_RESULT_TRY_AGAIN)
+    {
+        // Server should tell us how long it wants us to wait
+        uint16_t backoffms = TNFS_UINT16_FROM_LOHI_BYTEPTR(res_pkt.payload + 1);
+        Debug_printf("Server asked us to TRY AGAIN after %ums\r\n", backoffms);
+        if (backoffms > TNFS_MAX_BACKOFF_DELAY)
+            backoffms = TNFS_MAX_BACKOFF_DELAY;
+        fnSystem.delay(backoffms);
+        return RESP_TRY_AGAIN;
+    }
+
+    // Check for invalid (expired) session
+    if (res_pkt.payload[0] == TNFS_RESULT_INVALID_HANDLE \
+                && req_pkt.command != TNFS_CMD_MOUNT \
+                && req_pkt.command != TNFS_CMD_UNMOUNT)
+    {
+        Debug_printf("_tnfs_transaction - Invalid session ID\n");
+        // Recovery - start new session with server, i.e. remount
+        uint8_t res = _tnfs_session_recovery(m_info, req_pkt.command);
+        if (res != TNFS_RESULT_SUCCESS)
+        {
+            // update the result byte (TNFS_RESULT_INVALID_HANDLE or TNFS_RESULT_BAD_FILENUM)
+            res_pkt.payload[0] = res;
+            return RESP_VALID;
+        }
+        // retry the command using new session
+        req_pkt.session_idl = TNFS_LOBYTE_FROM_UINT16(m_info->session);
+        req_pkt.session_idh = TNFS_HIBYTE_FROM_UINT16(m_info->session);
+        return SESSION_RECOVERED;
+    }
+
+    return RESP_VALID;
+}
+
 // Re-mount using provided tnfsMountInfo*
 // Returns TNFS result code
 uint8_t _tnfs_session_recovery(tnfsMountInfo *m_info, uint8_t command)
@@ -1418,7 +1588,6 @@ uint8_t _tnfs_session_recovery(tnfsMountInfo *m_info, uint8_t command)
     // all other commands requires file descriptor or handle (which is lost with expired session)
     return TNFS_RESULT_BAD_FILENUM;
 }
-#endif
 
 // Copies to buffer while ensuring that we start with a '/'
 // Returns length of new full path or -1 on failure
@@ -1478,7 +1647,7 @@ void _tnfs_debug_packet(const tnfsPacket &pkt, unsigned short payload_size, bool
     Debug_printf("\t[%02x%02x %02x %02x] ", pkt.session_idh, pkt.session_idl, pkt.sequence_num, pkt.command);
     for (int i = 0; i < payload_size; i++)
         Debug_printf("%02x ", pkt.payload[i]);
-    Debug_println("");
+    Debug_println("\r\n");
 #endif
 }
 

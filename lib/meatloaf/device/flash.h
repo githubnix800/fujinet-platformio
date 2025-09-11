@@ -2,11 +2,7 @@
 #ifndef MEATLOAF_DEVICE_FLASH
 #define MEATLOAF_DEVICE_FLASH
 
-#include "meat_io.h"
-
-#ifdef FLASH_SPIFFS
-#include "esp_spiffs.h"
-#endif
+#include "meatloaf.h"
 
 #include "make_unique.h"
 
@@ -19,12 +15,12 @@
  * MFileSystem
  ********************************************************/
 
-class FlashFileSystem: public MFileSystem 
+class FlashMFileSystem: public MFileSystem 
 {
-    bool handles(std::string path);
+    bool handles(std::string path) override;
     
 public:
-    FlashFileSystem() : MFileSystem("FlashFS") {};
+    FlashMFileSystem() : MFileSystem("FlashFS") {};
     MFile* getFile(std::string path) override;
 
 };
@@ -35,29 +31,30 @@ public:
  * MFile
  ********************************************************/
 
-class FlashFile: public MFile
+class FlashMFile: public MFile
 {
-friend class FlashIStream;
+friend class FlashMStream;
 
 public:
     std::string basepath = "";
     
-    FlashFile(std::string path): MFile(path) {
+    FlashMFile(std::string path): MFile(path) {
         // parseUrl( path );
 
         // Find full filename for wildcard
         if (mstr::contains(name, "?") || mstr::contains(name, "*"))
-            seekEntry( name );
+            readEntry( name );
 
         if (!pathValid(path.c_str()))
             m_isNull = true;
         else
             m_isNull = false;
 
+        isWritable = true;
         //Debug_printv("basepath[%s] path[%s] valid[%d]", basepath.c_str(), this->path.c_str(), m_isNull);
     };
-    ~FlashFile() {
-        //Serial.printf("*** Destroying flashfile %s\r\n", url.c_str());
+    ~FlashMFile() {
+        //printf("*** Destroying flashfile %s\r\n", url.c_str());
         closeDir();
     }
 
@@ -65,19 +62,20 @@ public:
     bool isDirectory() override;
     MStream* getSourceStream(std::ios_base::openmode mode=std::ios_base::in) override ; // has to return OPENED stream
     MStream* getDecodedStream(std::shared_ptr<MStream> src);
+    MStream* createStream(std::ios_base::openmode mode) override;
 
     bool rewindDirectory() override;
     MFile* getNextFileInDir() override;
     bool mkDir() override;
+    bool rmDir() override;
     bool exists() override;
     bool remove() override;
-    bool rename(std::string dest);
+    bool rename(std::string dest) override;
 
     time_t getLastWrite() override;
     time_t getCreationTime() override;
-    uint32_t size() override;
 
-    bool seekEntry( std::string filename );
+    bool readEntry( std::string filename );
 
 protected:
     DIR* dir;
@@ -121,49 +119,39 @@ private:
  * MStream I
  ********************************************************/
 
-class FlashIStream: public MStream {
+class FlashMStream: public MStream {
 public:
-    FlashIStream(std::string& path, std::ios_base::openmode m) {
+    FlashMStream(std::string& path, std::ios_base::openmode m) {
         localPath = path;
         mode = m;
         handle = std::make_unique<FlashHandle>();
         //url = path;
     }
-    ~FlashIStream() override {
+    ~FlashMStream() override {
         close();
     }
 
     // MStream methods
+    bool isOpen() override;
     bool isBrowsable() override { return false; };
     bool isRandomAccess() override { return true; };
 
-    // MStream methods
-    // uint32_t available() override;
-    // uint32_t size() override;
-    // uint32_t position() override;
-    // size_t error() override;
-
-    virtual bool seek(uint32_t pos) override;
-    virtual bool seek(uint32_t pos, int mode) override;    
-
+    bool open(std::ios_base::openmode mode) override;
     void close() override;
-    bool open() override;
 
-    // MStream methods
-    //uint8_t read() override;
     uint32_t read(uint8_t* buf, uint32_t size) override;
     uint32_t write(const uint8_t *buf, uint32_t size) override;
+
+    virtual bool seek(uint32_t pos) override;
 
     virtual bool seekPath(std::string path) override {
         Debug_printv( "path[%s]", path.c_str() );
         return false;
     }
 
-    bool isOpen();
 
 protected:
     std::string localPath;
-
     std::unique_ptr<FlashHandle> handle;
 };
 

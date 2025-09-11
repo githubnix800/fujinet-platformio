@@ -1,4 +1,3 @@
-#ifndef ESP_PLATFORM
 
 #include "fnFsSMB.h"
 
@@ -125,6 +124,7 @@ FILE  *FileSystemSMB::file_open(const char *path, const char *mode)
     return nullptr;
 }
 
+#ifndef FNIO_IS_STDIO
 FileHandler *FileSystemSMB::filehandler_open(const char *path, const char *mode)
 {
     if(!_started || path == nullptr)
@@ -171,6 +171,7 @@ FileHandler *FileSystemSMB::filehandler_open(const char *path, const char *mode)
 
     return new FileHandlerSMB(_smb, fh);
 }
+#endif
 
 bool FileSystemSMB::is_dir(const char *path)
 {
@@ -242,9 +243,13 @@ bool FileSystemSMB::dir_open(const char  *path, const char *pattern, uint16_t di
             fs_de->modified_time = (time_t)smb_de->st.smb2_mtime;
 
             if (fs_de->isDir)
+            {
                 Debug_printf(" add entry: \"%s\"\tDIR\n", fs_de->filename);
+            }
             else
+            {
                 Debug_printf(" add entry: \"%s\"\t%lu\n", fs_de->filename, fs_de->size);
+            }
         }
         smb2_closedir(_smb, smb_dir);
     }
@@ -274,5 +279,3 @@ bool FileSystemSMB::dir_seek(uint16_t pos)
 {
     return _dircache.seek(pos);
 }
-
-#endif // !ESP_PLATFORM

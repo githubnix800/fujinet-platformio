@@ -15,6 +15,7 @@
 #include "led.h"
 
 #include "utils.h"
+#include "string_utils.h"
 
 #define ADDITIONAL_DETAILS_BYTES 12
 
@@ -210,6 +211,10 @@ void adamFuji::adamnet_net_set_ssid(uint16_t s)
         adamnet_response_ack();
 
         bool save = true;
+
+        // URL Decode SSID/PASSWORD to handle special chars FIXME
+        // mstr::urlDecode(cfg.ssid, sizeof(cfg.ssid));
+        // mstr::urlDecode(cfg.password, sizeof(cfg.password));
 
         Debug_printf("Connecting to net: %s password: %s\n", cfg.ssid, cfg.password);
 
@@ -994,6 +999,14 @@ void adamFuji::adamnet_get_host_prefix()
 {
 }
 
+// Public method to update host in specific slot
+fujiHost *adamFuji::set_slot_hostname(int host_slot, char *hostname)
+{
+    _fnHosts[host_slot].set_hostname(hostname);
+    _populate_config_from_slots();
+    return &_fnHosts[host_slot];
+}
+
 // Send device slot data to computer
 void adamFuji::adamnet_read_device_slots()
 {
@@ -1259,7 +1272,7 @@ void adamFuji::setup(systemBus *siobus)
     _populate_slots_from_config();
 
     // Disable booting from CONFIG if our settings say to turn it off
-    boot_config = false;
+    boot_config = Config.get_general_config_enabled();
 
     // Disable status_wait if our settings say to turn it off
     status_wait_enabled = false;
@@ -1275,17 +1288,24 @@ void adamFuji::setup(systemBus *siobus)
     _fnDisks[2].disk_dev.device_active = Config.get_device_slot_enable_3();
     _fnDisks[3].disk_dev.device_active = Config.get_device_slot_enable_4();
 
-    Debug_printf("Config General Boot Mode: %u\n", Config.get_general_boot_mode());
-    if (Config.get_general_boot_mode() == 0)
+    if (boot_config == true)
     {
-        FILE *f = fsFlash.file_open("/autorun.ddp");
-        _fnDisks[0].disk_dev.mount(f, "/autorun.ddp", 262144, MEDIATYPE_DDP);
-        _fnDisks[0].disk_dev.is_config_device = true;
+        Debug_printf("Config General Boot Mode: %u\n", Config.get_general_boot_mode());
+        if (Config.get_general_boot_mode() == 0)
+        {
+            FILE *f = fsFlash.file_open("/autorun.ddp");
+            _fnDisks[0].disk_dev.mount(f, "/autorun.ddp", 262144, MEDIATYPE_DDP);
+            _fnDisks[0].disk_dev.is_config_device = true;
+        }
+        else
+        {
+            FILE *f = fsFlash.file_open("/mount-and-boot.ddp");
+            _fnDisks[0].disk_dev.mount(f, "/mount-and-boot.ddp", 262144, MEDIATYPE_DDP);
+        }
     }
     else
     {
-        FILE *f = fsFlash.file_open("/mount-and-boot.ddp");
-        _fnDisks[0].disk_dev.mount(f, "/mount-and-boot.ddp", 262144, MEDIATYPE_DDP);
+        Debug_printf("Not mounting config disk\n");
     }
 
     theNetwork = new adamNetwork();
@@ -1331,7 +1351,7 @@ void adamFuji::mount_all()
             if (disk.access_mode == DISK_ACCESS_MODE_WRITE)
                 flag[1] = '+';
 
-            if (disk.host_slot != INVALID_HOST_SLOT)
+            if (disk.host_slot != INVALID_HOST_SLOT && strlen(disk.filename) > 0)
             {
                 nodisks = false; // We have a disk in a slot
 
@@ -1397,19 +1417,28 @@ void adamFuji::adamnet_get_time()
 
     struct tm *now = localtime(&tt);
 
-    now->tm_mon++;
-    now->tm_year -= 100;
+	/*
+     NWD order has changed to match apple format
+     Previously:
+        response[0] = now->tm_mday;
+        response[1] = now->tm_mon;
+        response[2] = now->tm_year;
+        response[3] = now->tm_hour;
+        response[4] = now->tm_min;
+        response[5] = now->tm_sec;
+    */
 
-    response[0] = now->tm_mday;
-    response[1] = now->tm_mon;
-    response[2] = now->tm_year;
-    response[3] = now->tm_hour;
-    response[4] = now->tm_min;
-    response[5] = now->tm_sec;
+	response[0] = (now->tm_year) / 100 + 19;
+	response[1] = now->tm_year % 100;
+	response[2] = now->tm_mon + 1;
+	response[3] = now->tm_mday;
+	response[4] = now->tm_hour;
+	response[5] = now->tm_min;
+	response[6] = now->tm_sec;
 
-    response_len = 6;
+	response_len = 7;
 
-    Debug_printf("Sending %02X %02X %02X %02X %02X %02X\n", now->tm_mday, now->tm_mon, now->tm_year, now->tm_hour, now->tm_min, now->tm_sec);
+    Debug_printf("Sending %02X %02X %02X %02X %02X %02X %02X\n", response[0], response[1], response[2], response[3], response[4], response[5], response[6]);
 }
 
 void adamFuji::adamnet_device_enable_status()

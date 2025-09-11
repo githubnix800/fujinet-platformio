@@ -11,7 +11,7 @@ MediaType::~MediaType()
     unmount();
 }
 
-bool MediaType::format(uint16_t *respopnsesize)
+bool MediaType::format(uint16_t *responsesize)
 {
     return true;
 }
@@ -26,11 +26,17 @@ bool MediaType::write(uint32_t blockNum, bool verify)
     return true;
 }
 
+void MediaType::get_block_buffer(uint8_t **p_buffer, uint16_t *p_blk_size)
+{
+    *p_buffer = &_media_blockbuff[0];
+    *p_blk_size = MEDIA_BLOCK_SIZE;
+}
+
 void MediaType::unmount()
 {
     if (_media_fileh != nullptr)
     {
-        fclose(_media_fileh);
+        fnio::fclose(_media_fileh);
         _media_fileh = nullptr;
     }
 }
@@ -45,6 +51,10 @@ mediatype_t MediaType::discover_mediatype(const char *filename)
         if (strcasecmp(ext, "DSK") == 0)
         {
             return MEDIATYPE_DSK;
+        }
+        else if (strcasecmp(ext, "MRM") == 0 || strcasecmp(ext, "RMM") == 0)
+        {
+            return MEDIATYPE_MRM;
         }
     }
     return MEDIATYPE_UNKNOWN;

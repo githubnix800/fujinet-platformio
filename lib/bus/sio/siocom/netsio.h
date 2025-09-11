@@ -1,9 +1,9 @@
 #ifndef NETSIO_H
 #define NETSIO_H
 
+#include <sys/time.h>
 #include "sioport.h"
 #include "fnDNS.h"
-#include <sys/time.h>
 
 class NetSioPort : public SioPort
 {
@@ -72,6 +72,8 @@ public:
     virtual void set_proceed(bool level) override;
     virtual void set_interrupt(bool level) override;
 
+    virtual void bus_idle(uint16_t ms) override;
+
     virtual int available() override;
     virtual void flush() override;
     virtual void flush_input() override;
@@ -79,7 +81,7 @@ public:
     // read single byte
     virtual int read() override;
     // read bytes into buffer
-    virtual size_t read(uint8_t *buffer, size_t length, bool command_mode=false) override;
+    virtual size_t read(uint8_t *buffer, size_t length) override;
 
     // write single byte
     virtual ssize_t write(uint8_t b) override;

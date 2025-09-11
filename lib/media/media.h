@@ -4,9 +4,7 @@
 #ifdef BUILD_ATARI
 # include "atari/diskType.h"
 # include "atari/diskTypeAtr.h"
-#ifdef ESP_PLATFORM
 # include "atari/diskTypeAtx.h"
-#endif
 # include "atari/diskTypeXex.h"
 #endif
 
@@ -63,6 +61,7 @@
 #ifdef BUILD_COCO
 # include "drivewire/mediaType.h"
 # include "drivewire/mediaTypeDSK.h"
+# include "drivewire/mediaTypeMRM.h"
 #endif
 
 #ifdef NEW_TARGET

@@ -1,6 +1,3 @@
-
-#include "fnFS.h"
-
 #ifdef ESP_PLATFORM
 #include <esp_vfs.h>
 #endif
@@ -9,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "fnFS.h"
 #include "compat_string.h"
 #include "../../include/debug.h"
 
@@ -28,9 +26,7 @@ char * FileSystem::_make_fullpath(const char *path)
             fullpath[l+1] = '\0';
         }
         strlcat(fullpath, path, MAX_PATHLEN);
-        #ifdef DEBUG
         //Debug_printf("_make_fullpath \"%s\" -> \"%s\"\r\n", path, fullpath);
-        #endif
 
         return fullpath;
     }
@@ -51,7 +47,7 @@ long FileSystem::filesize(FILE *f)
 }
 
 
-#ifndef ESP_PLATFORM
+#ifndef FNIO_IS_STDIO
 long FileSystem::filesize(FileHandler *fh)
 {
     long curr = fh->tell();
@@ -88,12 +84,12 @@ const char * FileSystem::type_to_string(fsType type)
             return "FS_SDFAT";
         case FSTYPE_TNFS:
             return "FS_TNFS";
-#ifndef ESP_PLATFORM
         case FSTYPE_SMB:
             return "FS_SMB";
         case FSTYPE_FTP:
             return "FS_FTP";
-#endif
+        case FSTYPE_HTTP:
+            return "FS_HTTP";
         default:
             return "UNKNOWN FS TYPE";
     }

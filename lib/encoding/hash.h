@@ -1,31 +1,43 @@
 #ifndef HASH_H
 #define HASH_H
 
-#include <cstdint>
 #include <vector>
-
-#include "mbedtls/sha1.h"
-#include "mbedtls/sha256.h"
-#include "mbedtls/sha512.h"
-#include "mbedtls/md5.h"
-
+#include <string>
+#include <mbedtls/md5.h>
+#include <mbedtls/sha1.h>
+#include <mbedtls/sha256.h>
+#include <mbedtls/sha512.h>
 
 class Hash {
 public:
-    unsigned char md5_output[16];
-    unsigned char sha1_output[20];
-    unsigned char sha256_output[32];
-    unsigned char sha512_output[64];
+    enum class Algorithm {
+        UNKNOWN = -1, MD5, SHA1, SHA256, SHA512
+    };
 
-    mbedtls_sha1_context _sha1;
-    mbedtls_sha256_context _sha256;
-    mbedtls_sha512_context _sha512;
+    Hash();
+    ~Hash();
 
-    std::vector<uint8_t> hash_output(uint16_t m, char hash_mode, uint16_t& olen);
-    void compute(uint16_t m, const std::string& data);
+    void add_data(const std::vector<uint8_t>& data);
+    void add_data(const std::string& data);
+    void clear();
+    size_t hash_length(Algorithm algorithm, bool is_hex) const;
+    void compute(Algorithm algorithm, bool clear_data);
+    std::vector<uint8_t> output_binary() const;
+    std::string output_hex() const;
 
+    static Hash::Algorithm to_algorithm(uint8_t value);
+    static Hash::Algorithm from_string(std::string hash_name);
+
+private:
+    std::vector<uint8_t> accumulated_data;
+    std::vector<uint8_t> hash_output;
+
+    void compute_sha1();
+    void compute_sha256();
+    void compute_sha512();
+    std::string bytes_to_hex(const std::vector<uint8_t>& bytes) const;
 };
 
 extern Hash hasher;
 
-#endif
+#endif // HASH_H

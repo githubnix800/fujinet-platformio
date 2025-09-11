@@ -14,6 +14,7 @@
 //     uint32_t bit_count;
 // };
 
+extern uint16_t decode_6_and_2(uint8_t *dest, const uint8_t *src);
 
 class MediaTypeDSK  : public MediaTypeWOZ
 {
@@ -26,12 +27,9 @@ private:
 
 public:
 
-#ifdef ESP_PLATFORM
-    virtual mediatype_t mount(FILE *f, uint32_t disksize) override;
-#else
-    virtual mediatype_t mount(FileHandler *f, uint32_t disksize) override;
-#endif
+    virtual mediatype_t mount(fnFile *f, uint32_t disksize) override;
     // virtual void unmount() override;
+    virtual bool write_sector(int track, int sector, uint8_t *buffer) override;
 
     // static bool create(FILE *f, uint32_t numBlock);
 };

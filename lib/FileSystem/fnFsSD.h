@@ -32,7 +32,7 @@ public:
     long filesize(const char *filepath) override;
 
     FILE * file_open(const char* path, const char* mode = FILE_READ) override;
-#ifndef ESP_PLATFORM
+#ifndef FNIO_IS_STDIO
     FileHandler * filehandler_open(const char* path, const char* mode = FILE_READ) override;
 #endif
 
@@ -59,6 +59,9 @@ public:
     uint64_t total_bytes();
     uint64_t used_bytes();
     const char *partition_type();
+
+    // TODO: make it part of base FileSystem class (similar to filesize)
+    long mtime(const char *path);
 };
 
 extern FileSystemSDFAT fnSDFAT;

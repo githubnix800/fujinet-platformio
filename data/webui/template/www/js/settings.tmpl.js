@@ -1,3 +1,45 @@
+function setupExperimentalToggle() {
+  const experimentalCheckbox = document.getElementById('experimental');
+  const experimentalEnabled = JSON.parse(localStorage.getItem('fujinet.experimental') || 'false');
+
+  if (experimentalEnabled) {
+    experimentalCheckbox.checked = true;
+    document.body.classList.add('show-experimental');
+  }
+  experimentalCheckbox.addEventListener('change', toggleExperimental);
+}
+
+function toggleExperimental(evt) {
+  document.body.classList.toggle('show-experimental');
+  localStorage.setItem('fujinet.experimental', evt.target.checked);
+}
+
+function setupHostEditing() {
+  const editLinks = document.querySelectorAll('a.edit-host');
+  editLinks.forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      const hs = Number(link.dataset.hostslot) - 1;
+      const currentHostname = link.dataset.hostname;
+
+      const updatedHostname = prompt(`Enter hostname for slot ${hs + 1}`, currentHostname);
+
+      // Abort on [Cancel]
+      if (updatedHostname === null) {
+        return;
+      }
+
+      fetch(`/hosts?hostslot=${hs}&hostname=${updatedHostname}`, { method: 'POST' })
+        .then(() => {
+          location.reload();
+        })
+        .catch(e => {
+          alert("Error: Could not update host");
+        });
+    });
+  });
+}
+
 function changeTz() {
 	const selElement = document.getElementById("select_tz");
 	const setElement = document.getElementById("txt_timezone")
@@ -126,6 +168,7 @@ setInputValue(current_boot_mode == 0, "boot-config-mode-config", "boot-config-mo
 setInputValue(current_status_wait_enabled == 1, "boot-sio-wait-yes", "boot-sio-wait-no");
 setInputValue(current_config_enabled == 1, "boot-config-disk-yes", "boot-config-disk-no");
 setInputValue(current_encrypt_passphrase_enabled == 1, "encrypt-passphrase-yes", "encrypt-passphrase-no");
+setInputValue(current_config_ng == 1, "config-ng-yes", "config-ng-no");
 {% endif %}
 
 {% if components.apetime %}
@@ -137,10 +180,21 @@ setInputValue(current_cpm_enabled == 1, "cpm-virt-yes", "cpm-virt-no");
 {% endif %}
 
 {% if components.serial_port %}
+{% if tweaks.platform == "ATARI" %}
 setSerialCommand(current_serial_command);
 setSerialProceed(current_serial_proceed);
+{% elif tweaks.platform == "COCO" %}
+selectListValue("select_serial_baud", current_serial_baud);
+{% endif %}
 {% endif %}
 
 {% if components.emulator_settings %}
-setInputValue(current_netsio_enabled == 1, "netsio-yes", "netsio-no");
+setInputValue(current_boip_enabled == 1, "boip-yes", "boip-no");
 {% endif %}
+
+{% if components.pclink %}
+setInputValue(current_pclink == 1, "pclink-yes", "pclink-no");
+{% endif %}
+
+setupExperimentalToggle();
+setupHostEditing();

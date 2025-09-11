@@ -51,13 +51,20 @@ mediatype_t macFloppy::mount(FILE *f, const char *filename, uint32_t disksize, m
       break;
     }
     break;
-  case MEDIATYPE_DCD:
+  case MEDIATYPE_DSK:
     Debug_printf("\nMounting Media Type DSK for DCD");
     device_active = true;
     _disk = new MediaTypeDCD();
     mt = ((MediaTypeDCD *)_disk)->mount(f);
     MAC.add_dcd_mount(id());
-  break;
+    break;
+  case MEDIATYPE_DC42:
+    Debug_printf("\nMounting Media Type DC42 for DCD");
+    device_active = true;
+    _disk = new MediaTypeDCD(0x54); // offset of image data in Disk Copy 4.2 file
+    mt = ((MediaTypeDCD *)_disk)->mount(f);
+    MAC.add_dcd_mount(id());
+    break;
   // case MEDIATYPE_DSK:
   //   Debug_printf("\nMounting Media Type DSK");
   //   device_active = true;
@@ -337,9 +344,9 @@ void macFloppy::process(mac_cmd_t cmd)
   case 'R':
     fnUartBUS.readBytes(s, 3);
     sector_num = ((uint32_t)s[0] << 16) + ((uint32_t)s[1] << 8) + (uint32_t)s[2];
-    Debug_printf("\nDCD sector request: %06x", sector_num);
+    Debug_printf("\nDCD sector request: %06lx", sector_num);
     if (_disk->read(sector_num, buffer))
-      Debug_printf("\nError Reading Sector %06x",sector_num);
+      Debug_printf("\nError Reading Sector %06lx",sector_num);
     // todo: error handling
     fnUartBUS.write(buffer, sizeof(buffer));
     break;
@@ -360,10 +367,10 @@ void macFloppy::process(mac_cmd_t cmd)
     fnUartBUS.readBytes(s, 3);
     fnUartBUS.readBytes(buffer, sizeof(buffer));
     sector_num = ((uint32_t)s[0] << 16) + ((uint32_t)s[1] << 8) + (uint32_t)s[2];
-    Debug_printf("\nDCD sector write: %06x", sector_num);
+    Debug_printf("\nDCD sector write: %06lx", sector_num);
     if (_disk->write(sector_num, buffer))
     {
-      Debug_printf("\nError Writing Sector %06x", sector_num);
+      Debug_printf("\nError Writing Sector %06lx", sector_num);
       fnUartBUS.write('e');
     }
     else

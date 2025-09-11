@@ -1,52 +1,54 @@
-#ifndef ESP_PLATFORM
 
 #include "fnDirCache.h"
 
 #include <cstring>
 #include <algorithm>
+#include "compat_string.h"
 
 #include "utils.h"
 
 
-bool _fsdir_sort_name_ascend(fsdir_entry &left, fsdir_entry &right)
+bool _fsdir_sort_name_ascend(const fsdir_entry* left, const fsdir_entry* right)
 {
-    if (left.isDir == right.isDir)
-        return strcasecmp(left.filename, right.filename) < 0;
+    if (left->isDir == right->isDir)
+        return strcasecmp(left->filename, right->filename) < 0;
     else
-        return left.isDir;
+        return left->isDir;
 }
 
-bool _fsdir_sort_name_descend(fsdir_entry &left, fsdir_entry &right)
+bool _fsdir_sort_name_descend(const fsdir_entry* left, const fsdir_entry* right)
 {
-    if (left.isDir == right.isDir)
-        return strcasecmp(left.filename, right.filename) > 0;
+    if (left->isDir == right->isDir)
+        return strcasecmp(left->filename, right->filename) > 0;
     else
-        return left.isDir;
+        return left->isDir;
 }
 
-bool _fsdir_sort_time_ascend(fsdir_entry &left, fsdir_entry &right)
+bool _fsdir_sort_time_ascend(const fsdir_entry* left, const fsdir_entry* right)
 {
-    if (left.isDir == right.isDir)
-        return left.modified_time > right.modified_time;
+    if (left->isDir == right->isDir)
+        return left->modified_time > right->modified_time;
     else
-        return left.isDir;
+        return left->isDir;
 }
 
-bool _fsdir_sort_time_descend(fsdir_entry &left, fsdir_entry &right)
+bool _fsdir_sort_time_descend(const fsdir_entry* left, const fsdir_entry* right)
 {
-    if (left.isDir == right.isDir)
-        return left.modified_time < right.modified_time;
+    if (left->isDir == right->isDir)
+        return left->modified_time < right->modified_time;
     else
-        return left.isDir;
+        return left->isDir;
 }
 
-typedef bool (*sort_fn_t)(fsdir_entry &left, fsdir_entry &right);
+typedef bool (*sort_fn_t)(const fsdir_entry* left, const fsdir_entry* right);
 
 
 void DirCache::clear()
 {
-    _entries.clear();
     _entries_filtered.clear();
+    _entries_filtered.shrink_to_fit();
+    _entries.clear();
+    _entries.shrink_to_fit();
     _current = 0;
 }
 
@@ -58,18 +60,29 @@ fsdir_entry &DirCache::new_entry()
 
 void DirCache::apply_filter(const char *pattern, uint16_t diropts)
 {
+	char realpat[MAX_PATHLEN];
+	//char *thepat = nullptr;
     bool have_pattern = pattern != nullptr && pattern[0] != '\0';
-    fsdir_entry entry;
+	bool filter_dirs = have_pattern && pattern[strlen(pattern)-1] == '/';
+	if (filter_dirs) {
+		strlcpy (realpat, pattern, sizeof (realpat));
+		realpat[strlen(realpat)-1] = '\0';
+	}
+	//thepat = filter_dirs ? realpat : (char *)pattern;
+
+    _entries_filtered.clear();
+    _entries_filtered.shrink_to_fit();
 
     // Filter directory entries
-    _entries_filtered.clear();
     for (unsigned i=0; i<_entries.size(); ++i)
     {
-        entry = _entries[i];
+        fsdir_entry& entry = _entries[i];
         // Skip this entry if we have a search filter and it doesn't match it
-        if(!entry.isDir && have_pattern && util_wildcard_match(entry.filename, pattern) == false)
+        if (have_pattern && (
+            !entry.isDir || (entry.isDir && filter_dirs)
+            ) && util_wildcard_match(entry.filename, pattern) == false)
             continue;
-        _entries_filtered.push_back(entry);
+        _entries_filtered.push_back(&entry);
     }
 
     // Choose the appropriate sorting function
@@ -92,7 +105,7 @@ void DirCache::apply_filter(const char *pattern, uint16_t diropts)
 fsdir_entry *DirCache::read()
 {
     if(_current < _entries_filtered.size())
-        return &_entries_filtered[_current++];
+        return _entries_filtered[_current++];
     else
         return nullptr;
 }
@@ -115,5 +128,3 @@ bool DirCache::seek(uint16_t pos)
     else
         return false;
 }
-
-#endif // !ESP_PLATFORM

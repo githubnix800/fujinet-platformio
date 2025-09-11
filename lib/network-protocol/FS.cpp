@@ -1,6 +1,6 @@
 /**
  * NetworkProtocolFS
- * 
+ *
  * Implementation
  */
 
@@ -15,6 +15,9 @@
 #include "utils.h"
 
 #include <cstring>
+#include <memory>
+#include <iostream>
+#include <vector>
 
 #define ENTRY_BUFFER_SIZE 256
 
@@ -55,6 +58,8 @@ bool NetworkProtocolFS::open_file()
 
     if (aux1_open == 4 || aux1_open == 8)
         resolve();
+    else
+        stat();
 
     update_dir_filename(opened_url);
 
@@ -69,6 +74,9 @@ bool NetworkProtocolFS::open_file()
 bool NetworkProtocolFS::open_dir()
 {
     openMode = DIR;
+#ifndef BUILD_ATARI
+    this->setLineEnding("\r\n");
+#endif /* BUILD_RS232 */
     dirBuffer.clear();
     dirBuffer.shrink_to_fit();
     update_dir_filename(opened_url);
@@ -77,7 +85,9 @@ bool NetworkProtocolFS::open_dir()
     if (filename.empty())
         filename = "*";
 
+#ifdef VERBOSE_PROTOCOL
     Debug_printf("NetworkProtocolFS::open_dir(%s)\r\n", opened_url->url.c_str());
+#endif
 
     if (opened_url->path.empty())
     {
@@ -90,26 +100,30 @@ bool NetworkProtocolFS::open_dir()
         return true;
     }
 
-    char *entryBuffer = (char *)malloc(ENTRY_BUFFER_SIZE);
+    std::vector<uint8_t> entryBuffer(ENTRY_BUFFER_SIZE);
 
-    while (read_dir_entry(entryBuffer, ENTRY_BUFFER_SIZE-1) == false)
+    while (read_dir_entry((char *)entryBuffer.data(), ENTRY_BUFFER_SIZE - 1) == false)
     {
+        if (entryBuffer.at(0) == '.' || entryBuffer.at(0) == '/')
+            continue;
+
         if (aux2_open & 0x80)
         {
             // Long entry
             if (aux2_open == 0x81) // Apple2 80 col format.
-                dirBuffer += util_long_entry_apple2_80col(std::string(entryBuffer), fileSize, is_directory) + "\x9b";
+                dirBuffer += util_long_entry_apple2_80col((char *)entryBuffer.data(), fileSize, is_directory) + lineEnding;
             else
-            dirBuffer += util_long_entry(std::string(entryBuffer), fileSize, is_directory) + "\x9b";
+                dirBuffer += util_long_entry((char *)entryBuffer.data(), fileSize, is_directory) + lineEnding;
         }
         else
         {
             // 8.3 entry
-            dirBuffer += util_entry(util_crunch(std::string(entryBuffer)), fileSize, is_directory, is_locked) + "\x9b";
+            dirBuffer += util_entry(util_crunch((char *)entryBuffer.data()), fileSize, is_directory, is_locked) + lineEnding;
         }
         fserror_to_error();
 
-        memset(entryBuffer,0,ENTRY_BUFFER_SIZE);
+        // Clearing the buffer for reuse
+        std::fill(entryBuffer.begin(), entryBuffer.end(), 0); // fenrock was right.
     }
 
 #ifdef BUILD_ATARI
@@ -120,8 +134,6 @@ bool NetworkProtocolFS::open_dir()
     if (error == NETWORK_ERROR_END_OF_FILE)
         error = NETWORK_ERROR_SUCCESS;
 
-    free(entryBuffer);
-
     return error != NETWORK_ERROR_SUCCESS;
 }
 
@@ -129,7 +141,7 @@ void NetworkProtocolFS::update_dir_filename(PeoplesUrlParser *url)
 {
     size_t found = url->path.find_last_of("/");
 
-    dir = url->path.substr(0, found + 1);
+    dir = util_get_canonical_path(url->path.substr(0, found + 1));
     filename = url->path.substr(found + 1);
 
     // transform the possible everything wildcards
@@ -178,6 +190,8 @@ bool NetworkProtocolFS::read(unsigned short len)
 {
     bool ret;
 
+    is_write = false;
+
     switch (openMode)
     {
     case FILE:
@@ -195,34 +209,29 @@ bool NetworkProtocolFS::read(unsigned short len)
 
 bool NetworkProtocolFS::read_file(unsigned short len)
 {
-    buf = (uint8_t *)malloc(len);
+    std::vector<uint8_t> buf = std::vector<uint8_t>(len);
 
+#ifdef VERBOSE_HTTP
     Debug_printf("NetworkProtocolFS::read_file(%u)\r\n", len);
-
-    if (buf == nullptr)
-    {
-        Debug_printf("NetworkProtocolFS:read_file(%u) could not allocate.\r\n", len);
-        return true; // error
-    }
+#endif
 
     if (receiveBuffer->length() == 0)
     {
         // Do block read.
-        if (read_file_handle(buf, len) == true)
+        if (read_file_handle(buf.data(), len) == true)
         {
-            free(buf);
+#ifdef VERBOSE_PROTOCOL
+            Debug_printf("Nothing new from adapter, bailing.\n");
+#endif
             return true;
         }
 
         // Append to receive buffer.
-        *receiveBuffer += std::string((char *)buf, len);
+        receiveBuffer->insert(receiveBuffer->end(), buf.begin(), buf.end());
         fileSize -= len;
     }
     else
         error = NETWORK_ERROR_SUCCESS;
-
-    // Done with the temporary buffer.
-    free(buf);
 
     // Pass back to base class for translation.
     return NetworkProtocol::read(len);
@@ -246,6 +255,7 @@ bool NetworkProtocolFS::read_dir(unsigned short len)
 
 bool NetworkProtocolFS::write(unsigned short len)
 {
+    is_write = true;
     len = translate_transmit_buffer();
     return write_file(len); // Do more here? not sure.
 }
@@ -274,21 +284,35 @@ bool NetworkProtocolFS::status(NetworkStatus *status)
     }
 }
 
-bool NetworkProtocolFS::status_file(NetworkStatus *status)
-{
-    if (aux1_open == 8)
-        status->rxBytesWaiting = 0;
-    else
 #ifdef BUILD_ATARI
-        status->rxBytesWaiting = fileSize > 512 ? 512 : fileSize;
+#define WAITING_CAP 512
 #else
-        status->rxBytesWaiting = fileSize > 65534 ? 65534 : fileSize;
+#define WAITING_CAP 65534
 #endif
 
-    status->connected = fileSize > 0 ? 1 : 0;
-    status->error = fileSize > 0 ? error : NETWORK_ERROR_END_OF_FILE;
+bool NetworkProtocolFS::status_file(NetworkStatus *status)
+{
+    unsigned int remaining;
 
+    if (aux1_open == 8) {
+        status->rxBytesWaiting = 0;
+        remaining = fileSize;
+    }
+    else {
+        remaining = fileSize + receiveBuffer->length();
+        status->rxBytesWaiting = remaining > WAITING_CAP ? WAITING_CAP : remaining;
+    }
+
+    status->connected = remaining > 0 ? 1 : 0;
+    if (is_write)
+        status->error = 1;
+    else
+        status->error = remaining > 0 ? error : NETWORK_ERROR_END_OF_FILE;
+
+#if 0
+    // This will reset the status->rxBytesWaiting that we just calculated above
     NetworkProtocol::status(status);
+#endif
 
     return false;
 }
@@ -349,7 +373,9 @@ bool NetworkProtocolFS::special_80(uint8_t *sp_buf, unsigned short len, cmdFrame
 
 void NetworkProtocolFS::resolve()
 {
+#ifdef VERBOSE_PROTOCOL
     Debug_printf("NetworkProtocolFS::resolve(%s,%s,%s)\r\n", opened_url->path.c_str(), dir.c_str(), filename.c_str());
+#endif
 
     if (stat() == true) // true = error.
     {
@@ -371,7 +397,9 @@ void NetworkProtocolFS::resolve()
             std::string current_entry = std::string(e);
             std::string crunched_entry = util_crunch(current_entry);
 
+#ifdef VERBOSE_PROTOCOL
             Debug_printf("current entry \"%s\" crunched entry \"%s\"\r\n", current_entry.c_str(), crunched_entry.c_str());
+#endif
 
             if (crunched_filename == crunched_entry)
             {
@@ -384,33 +412,39 @@ void NetworkProtocolFS::resolve()
         close_dir_handle();
     }
 
+#ifdef VERBOSE_PROTOCOL
     Debug_printf("Resolved to %s\r\n", opened_url->url.c_str());
+#endif
 
     // Clear file size, if resolved to write and not append.
     if (aux1_open == 8)
         fileSize = 0;
-    
+
 }
 
 bool NetworkProtocolFS::perform_idempotent_80(PeoplesUrlParser *url, cmdFrame_t *cmdFrame)
 {
+#ifdef VERBOSE_PROTOCOL
     Debug_printf("NetworkProtocolFS::perform_idempotent_80, url: %s cmd: 0x%02X\r\n", url->url.c_str(), cmdFrame->comnd);
+#endif
     switch (cmdFrame->comnd)
     {
-    case 0x20:
+    case FUJI_CMD_RENAME:
         return rename(url, cmdFrame);
-    case 0x21:
+    case FUJI_CMD_DELETE:
         return del(url, cmdFrame);
-    case 0x23:
+    case FUJI_CMD_LOCK:
         return lock(url, cmdFrame);
-    case 0x24:
+    case FUJI_CMD_UNLOCK:
         return unlock(url, cmdFrame);
-    case 0x2A:
+    case FUJI_CMD_MKDIR:
         return mkdir(url, cmdFrame);
-    case 0x2B:
+    case FUJI_CMD_RMDIR:
         return rmdir(url, cmdFrame);
     default:
+#ifdef VERBOSE_PROTOCOL
         Debug_printf("Uncaught idempotent command: 0x%02X\r\n", cmdFrame->comnd);
+#endif
         return true;
     }
 }
@@ -433,7 +467,9 @@ bool NetworkProtocolFS::rename(PeoplesUrlParser *url, cmdFrame_t *cmdFrame)
     destFilename = dir + filename.substr(comma_pos + 1);
     filename = dir + filename.substr(0, comma_pos);
 
+#ifdef VERBOSE_PROTOCOL
     Debug_printf("RENAME destfilename, %s, filename, %s\r\n", destFilename.c_str(), filename.c_str());
+#endif
 
     return false;
 }

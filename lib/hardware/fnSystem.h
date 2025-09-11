@@ -10,6 +10,9 @@
 
 #ifdef ESP_PLATFORM
 #include <driver/gpio.h>
+#include <esp_timer.h>
+#else
+#include <signal.h>
 #endif
 
 #include "../FileSystem/fnFS.h"
@@ -31,15 +34,16 @@ private:
     char _uptime_string[24];
     char _currenttime_string[40];
     int _hardware_version = 0; // unknown
-    bool a2spifix = false;
+    bool a2hasbuffer = false;
     bool a2no3state = false;
     bool ledstrip_found = false;
 #ifdef ESP_PLATFORM
-    gpio_num_t safe_reset_gpio = GPIO_NUM_14; // Default 14 for most boards, can be changed in fnSystem during hardware checks
+    gpio_num_t safe_reset_gpio = GPIO_NUM_NC;
 #else
     char _uname_string[128];
     uint64_t _reboot_at = 0;
     int _reboot_code = EXIT_AND_RESTART;
+    volatile sig_atomic_t _shutdown_requests = 0;
 #endif
 
 public:
@@ -111,6 +115,8 @@ public:
 #else
     void reboot(uint32_t delay_ms = 0, bool reboot=true);
     bool check_deferred_reboot();
+    int request_for_shutdown();
+    int check_for_shutdown();
 #endif
     uint32_t get_cpu_frequency();
     uint32_t get_free_heap_size();
@@ -156,10 +162,13 @@ public:
     void check_hardware_ver();
     int get_hardware_ver() { return _hardware_version; };
     const char *get_hardware_ver_str();
+    const char *get_target_platform_str();
 
-    bool spifix() { return a2spifix; };
+    bool hasbuffer() { return a2hasbuffer; };
+    bool spishared() { return !a2hasbuffer; };
     bool no3state() { return a2no3state; };
     bool ledstrip() { return ledstrip_found; };
+    bool has_button_c();
 #ifdef ESP_PLATFORM
     gpio_num_t get_safe_reset_gpio() { return safe_reset_gpio; };
 #endif

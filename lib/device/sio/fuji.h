@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <map>
 
 #include "mbedtls/sha1.h"
 #include "mbedtls/sha256.h"
@@ -17,6 +18,8 @@
 #include "../fuji/fujiHost.h"
 #include "../fuji/fujiDisk.h"
 #include "../fuji/fujiCmd.h"
+
+#include "hash.h"
 
 #define MAX_HOSTS 8
 #define MAX_DISK_DEVICES 8
@@ -62,11 +65,12 @@ typedef struct
     char sBssid[18];
 } AdapterConfigExtended;
 
-enum appkey_mode : uint8_t
+enum appkey_mode : int8_t
 {
+    APPKEYMODE_INVALID = -1,
     APPKEYMODE_READ = 0,
     APPKEYMODE_WRITE,
-    APPKEYMODE_INVALID
+    APPKEYMODE_READ_256
 };
 
 struct appkey
@@ -109,7 +113,7 @@ private:
     mbedtls_sha256_context _sha256;
     mbedtls_sha512_context _sha512;
 
-    char hash_mode = 0;
+    Hash::Algorithm algorithm = Hash::Algorithm::UNKNOWN;
 
 protected:
     void sio_reset_fujinet();          // 0xFF
@@ -135,13 +139,13 @@ protected:
     void sio_write_device_slots();     // 0xF1
     void sio_enable_udpstream();       // 0xF0
     void sio_net_get_wifi_enabled();   // 0xEA
+    void sio_set_baudrate();           // 0xEB
 #ifdef ESP_PLATFORM
     void sio_disk_image_umount();      // 0xE9
 #else
     int sio_disk_image_umount(bool siomode=true, int slot=-1);  // 0xE9
 #endif
     void sio_get_adapter_config();     // 0xE8
-    void sio_get_adapter_config_extended(); // 0xE8
     void sio_new_disk();               // 0xE7
     void sio_unmount_host();           // 0xE6
     void sio_get_directory_position(); // 0xE5
@@ -159,6 +163,7 @@ protected:
     void sio_set_boot_config();        // 0xD9
     void sio_copy_file();              // 0xD8
     void sio_set_boot_mode();          // 0xD6
+    void sio_random_number();          // 0xD3
     void sio_base64_encode_input();    // 0xD0
     void sio_base64_encode_compute();  // 0xCF
     void sio_base64_encode_length();   // 0xCE
@@ -168,14 +173,26 @@ protected:
     void sio_base64_decode_length();   // 0xCA
     void sio_base64_decode_output();   // 0xC9
     void sio_hash_input();             // 0xC8
-    void sio_hash_compute();           // 0xC7
+    void sio_hash_compute(bool clear_data); // 0xC7, 0xC3
     void sio_hash_length();            // 0xC6
     void sio_hash_output();            // 0xC5
+    void sio_get_adapter_config_extended(); // 0xC4
+    void sio_hash_clear();             // 0xC2
+    void sio_qrcode_input();           // 0xBC
+    void sio_qrcode_encode();          // 0xBD
+    void sio_qrcode_length();          // OxBE
+    void sio_qrcode_output();          // 0xBF
 
     void sio_status() override;
     void sio_process(uint32_t commanddata, uint8_t checksum) override;
 
     void shutdown() override;
+
+    int appkey_size = 64;
+    std::map<int, int> mode_to_keysize = {
+        {0, 64},
+        {2, 256}
+    };
 
 #ifndef ESP_PLATFORM
     friend class fnHttpServiceBrowser; // allow browser to call above functions
@@ -203,6 +220,7 @@ public:
 
     fujiHost *get_hosts(int i) { return &_fnHosts[i]; }
     fujiDisk *get_disks(int i) { return &_fnDisks[i]; }
+    fujiHost *set_slot_hostname(int host_slot, char *hostname);
 
     void _populate_slots_from_config();
     void _populate_config_from_slots();

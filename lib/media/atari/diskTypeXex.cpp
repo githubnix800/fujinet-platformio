@@ -176,21 +176,13 @@ bool MediaTypeXEX::read(uint16_t sectornum, uint16_t *readcount)
     if (sectornum != _disk_last_sector + 1)
     {
         Debug_printf("seeking to offset %d in XEX\r\n", xex_offset);
-#ifdef ESP_PLATFORM
-        err = fseek(_disk_fileh, xex_offset, SEEK_SET) != 0;
-#else
-        err = _disk_fileh->seek(xex_offset, SEEK_SET) != 0;
-#endif
+        err = fnio::fseek(_disk_fileh, xex_offset, SEEK_SET) != 0;
     }
 
     if (err == false)
     {
         Debug_printf("requesting %d bytes from XEX\r\n", data_bytes);
-#ifdef ESP_PLATFORM
-        int read = fread(_disk_sectorbuff, 1, data_bytes, _disk_fileh);
-#else
-        int read = _disk_fileh->read(_disk_sectorbuff, 1, data_bytes);
-#endif
+        int read = fnio::fread(_disk_sectorbuff, 1, data_bytes, _disk_fileh);
         Debug_printf("received %d bytes\r\n", read);
 
         // Fill in the sector link data pointing to the next sector
@@ -235,11 +227,7 @@ MediaTypeXEX::~MediaTypeXEX()
     unmount();
 }
 
-#ifdef ESP_PLATFORM
-mediatype_t MediaTypeXEX::mount(FILE *f, uint32_t disksize)
-#else
-mediatype_t MediaTypeXEX::mount(FileHandler *f, uint32_t disksize)
-#endif
+mediatype_t MediaTypeXEX::mount(fnFile *f, uint32_t disksize)
 {
     Debug_print("XEX MOUNT\r\n");
 
@@ -267,8 +255,8 @@ mediatype_t MediaTypeXEX::mount(FileHandler *f, uint32_t disksize)
     if (_disk_num_sectors < 720)
         _disk_num_sectors = 720;
 
-    Debug_printf("mounted XEX with %d-byte bootloader; XEX size=%d\r\n", _xex_bootloadersize, _disk_image_size);
-    Debug_printf("disk sectors = %d\r\n", _disk_num_sectors);
+    Debug_printf("mounted XEX with %d-byte bootloader; XEX size=%lu\r\n", _xex_bootloadersize, _disk_image_size);
+    Debug_printf("disk sectors = %lu\r\n", _disk_num_sectors);
 
     return _disktype;
 }

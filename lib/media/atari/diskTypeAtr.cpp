@@ -38,11 +38,11 @@ uint32_t MediaTypeATR::_sector_to_offset(uint16_t sectorNum)
         else
             offset = 272;
         break;
-    default:
+    default: // TODO: refactor this to generalize.
         if (_disk_sector_size == 256)
             offset = ((sectorNum - 3) * 256) + 16 + 128;
         else if (_disk_sector_size == 512)
-            offset = (sectorNum * 512) + 16;
+            offset = ((sectorNum - 1) * 512) + 16;
         else
             offset = ((sectorNum - 1) * 128) + 16;
         break;
@@ -54,14 +54,14 @@ uint32_t MediaTypeATR::_sector_to_offset(uint16_t sectorNum)
 // Returns TRUE if an error condition occurred
 bool MediaTypeATR::read(uint16_t sectornum, uint16_t *readcount)
 {
-    Debug_printf("ATR READ %d / %d\r\n", sectornum, _disk_num_sectors);
+    Debug_printf("ATR READ %d / %lu\r\n", sectornum, _disk_num_sectors);
 
     *readcount = 0;
 
     // Return an error if we're trying to read beyond the end of the disk
     if (sectornum > _disk_num_sectors)
     {
-        Debug_printf("::read sector %d > %d\r\n", sectornum, _disk_num_sectors);
+        Debug_printf("::read sector %d > %lu\r\n", sectornum, _disk_num_sectors);
         return true;
     }
 
@@ -74,19 +74,11 @@ bool MediaTypeATR::read(uint16_t sectornum, uint16_t *readcount)
     if (sectornum != _disk_last_sector + 1)
     {
         uint32_t offset = _sector_to_offset(sectornum);
-#ifdef ESP_PLATFORM
-        err = fseek(_disk_fileh, offset, SEEK_SET) != 0;
-#else
-        err = _disk_fileh->seek(offset, SEEK_SET) != 0;
-#endif
+        err = fnio::fseek(_disk_fileh, offset, SEEK_SET) != 0;
     }
 
     if (err == false)
-#ifdef ESP_PLATFORM
-        err = fread(_disk_sectorbuff, 1, sectorSize, _disk_fileh) != sectorSize;
-#else
-        err = _disk_fileh->read(_disk_sectorbuff, 1, sectorSize) != sectorSize;
-#endif
+        err = fnio::fread(_disk_sectorbuff, 1, sectorSize, _disk_fileh) != sectorSize;
 
     if (err == false)
         _disk_last_sector = sectornum;
@@ -106,21 +98,17 @@ bool inHighScoreRange(int minimum, int maximum, int val)
 // Returns TRUE if an error condition occurred
 bool MediaTypeATR::write(uint16_t sectornum, bool verify)
 {
-#ifdef ESP_PLATFORM
-    FILE *oldFileh, *hsFileh;
-#else
-    FileHandler *oldFileh, *hsFileh;
-#endif
+    fnFile *oldFileh, *hsFileh;
 
     oldFileh = nullptr;
     hsFileh = nullptr;
 
-    Debug_printf("ATR WRITE %d / %d\r\n", sectornum, _disk_num_sectors);
+    Debug_printf("ATR WRITE %d / %lu\r\n", sectornum, _disk_num_sectors);
 
     // Return an error if we're trying to write beyond the end of the disk
     if (sectornum > _disk_num_sectors)
     {
-        Debug_printf("::write sector %d > %d\r\n", sectornum, _disk_num_sectors);
+        Debug_printf("::write sector %d > %lu\r\n", sectornum, _disk_num_sectors);
         return true;
     }
 
@@ -134,11 +122,7 @@ bool MediaTypeATR::write(uint16_t sectornum, bool verify)
         else
         {
             oldFileh = _disk_fileh;
-#ifdef ESP_PLATFORM
-            hsFileh = _disk_host->file_open(_disk_filename, _disk_filename, strlen(_disk_filename) + 1, "r+");
-#else
-            hsFileh = _disk_host->filehandler_open(_disk_filename, _disk_filename, strlen(_disk_filename) + 1, "rb+");
-#endif
+            hsFileh = _disk_host->fnfile_open(_disk_filename, _disk_filename, strlen(_disk_filename) + 1, "rb+");
             _disk_fileh = hsFileh;
         }
     }
@@ -151,11 +135,7 @@ bool MediaTypeATR::write(uint16_t sectornum, bool verify)
     int e;
     if (sectornum != _disk_last_sector + 1)
     {
-#ifdef ESP_PLATFORM
-        e = fseek(_disk_fileh, offset, SEEK_SET);
-#else
-        e = _disk_fileh->seek(offset, SEEK_SET);
-#endif
+        e = fnio::fseek(_disk_fileh, offset, SEEK_SET);
         if (e != 0)
         {
             Debug_printf("::write seek error %d\r\n", e);
@@ -163,35 +143,22 @@ bool MediaTypeATR::write(uint16_t sectornum, bool verify)
         }
     }
     // Write the data
-#ifdef ESP_PLATFORM
-    e = fwrite(_disk_sectorbuff, 1, sectorSize, _disk_fileh);
-#else
-    e = _disk_fileh->write(_disk_sectorbuff, 1, sectorSize);
-#endif
+    e = fnio::fwrite(_disk_sectorbuff, 1, sectorSize, _disk_fileh);
     if (e != sectorSize)
     {
         Debug_printf("::write error %d, %d\r\n", e, errno);
         return true;
     }
 
-#ifdef ESP_PLATFORM
-    int ret = fflush(_disk_fileh);    // This doesn't seem to be connected to anything in ESP-IDF VF, so it may not do anything
-    ret = fsync(fileno(_disk_fileh)); // Since we might get reset at any moment, go ahead and sync the file (not clear if fflush does this)
-#else
-    int ret = _disk_fileh->flush();
-#endif
-    Debug_printf("ATR::write fsync:%d\r\n", ret);
+    int ret = fnio::fflush(_disk_fileh); // Since we might get reset at any moment, go ahead and sync the file
+    Debug_printf("ATR::write fflush:%d\r\n", ret);
 
     if (_high_score_sector != 0)
     {
         Debug_printf("Closing high score sector.\r\n");
 
         if (hsFileh != nullptr)
-#ifdef ESP_PLATFORM
-            fclose(hsFileh);
-#else
-            hsFileh->close();
-#endif
+            fnio::fclose(hsFileh);
 
         _disk_fileh = oldFileh;
         _disk_last_sector = INVALID_SECTOR_VALUE; // force a cache invalidate.
@@ -206,14 +173,15 @@ void MediaTypeATR::status(uint8_t statusbuff[4])
 {
     statusbuff[0] = DISK_DRIVE_STATUS_CLEAR;
 
-    if (_disk_sector_size > 128)
+    if (_percomBlock.sectors_per_trackL == 26)
+        statusbuff[0] |= DISK_DRIVE_STATUS_ENHANCED_DENSITY;
+    else if (_disk_sector_size > 128)
         statusbuff[0] |= DISK_DRIVE_STATUS_DOUBLE_DENSITY;
 
     if (_percomBlock.num_sides == 1)
         statusbuff[0] |= DISK_DRIVE_STATUS_DOUBLE_SIDED;
 
-    if (_percomBlock.sectors_per_trackL == 26)
-        statusbuff[0] |= DISK_DRIVE_STATUS_ENHANCED_DENSITY;
+
 
     statusbuff[1] = ~_disk_controller_status; // Negate the controller status
 }
@@ -252,11 +220,7 @@ bool MediaTypeATR::format(uint16_t *responsesize)
 
  07-0F have two possible interpretations but are no critical for our use
 */
-#ifdef ESP_PLATFORM
-mediatype_t MediaTypeATR::mount(FILE *f, uint32_t disksize)
-#else
-mediatype_t MediaTypeATR::mount(FileHandler *f, uint32_t disksize)
-#endif
+mediatype_t MediaTypeATR::mount(fnFile *f, uint32_t disksize)
 {
     Debug_print("ATR MOUNT\r\n");
 
@@ -268,20 +232,12 @@ mediatype_t MediaTypeATR::mount(FileHandler *f, uint32_t disksize)
 
     // Get file and sector size from header
     int i;
-#ifdef ESP_PLATFORM
-    if ((i = fseek(f, 0, SEEK_SET)) < 0)
-#else
-    if ((i = f->seek(0, SEEK_SET)) < 0)
-#endif
+    if ((i = fnio::fseek(f, 0, SEEK_SET)) < 0)
     {
         Debug_printf("failed seeking to header on disk image (%d, %d)\r\n", i, errno);
         return _disktype;
     }
-#ifdef ESP_PLATFORM
-    if ((i = fread(buf, 1, sizeof(buf), f)) != sizeof(buf))
-#else
-    if ((i = f->read(buf, 1, sizeof(buf))) != sizeof(buf))
-#endif
+    if ((i = fnio::fread(buf, 1, sizeof(buf), f)) != sizeof(buf))
     {
         Debug_printf("failed reading header bytes (%d, %d)\r\n", i, errno);
         return _disktype;
@@ -317,7 +273,7 @@ mediatype_t MediaTypeATR::mount(FileHandler *f, uint32_t disksize)
     if (_high_score_sector > 0)
         Debug_printf("High Score Sector Specified: %u\r\n", _high_score_sector);
 
-    Debug_printf("mounted ATR: paragraphs=%d, sect_size=%d, sect_count=%d, disk_size=%d\r\n",
+    Debug_printf("mounted ATR: paragraphs=%lu, sect_size=%d, sect_count=%lu, disk_size=%lu\r\n",
                  num_paragraphs, num_bytes_sector, _disk_num_sectors, disksize);
 
     _disktype = MEDIATYPE_ATR;
@@ -326,11 +282,7 @@ mediatype_t MediaTypeATR::mount(FileHandler *f, uint32_t disksize)
 }
 
 // Returns FALSE on error
-#ifdef ESP_PLATFORM
-bool MediaTypeATR::create(FILE *f, uint16_t sectorSize, uint16_t numSectors)
-#else
-bool MediaTypeATR::create(FileHandler *f, uint16_t sectorSize, uint16_t numSectors)
-#endif
+bool MediaTypeATR::create(fnFile *f, uint16_t sectorSize, uint16_t numSectors)
 {
     Debug_print("ATR CREATE\r\n");
 
@@ -375,14 +327,10 @@ bool MediaTypeATR::create(FileHandler *f, uint16_t sectorSize, uint16_t numSecto
     atrHeader.secsizeL = LOBYTE_FROM_UINT16(sectorSize);
     atrHeader.secsizeH = HIBYTE_FROM_UINT16(sectorSize);
 
-    Debug_printf("Write header to ATR: sec_size=%d, sectors=%d, paragraphs=%d, bytes=%d\r\n",
+    Debug_printf("Write header to ATR: sec_size=%d, sectors=%d, paragraphs=%lu, bytes=%lu\r\n",
                  sectorSize, numSectors, num_paragraphs, total_size);
 
-#ifdef ESP_PLATFORM
-    uint32_t offset = fwrite(&atrHeader, 1, sizeof(atrHeader), f);
-#else
-    uint32_t offset = f->write(&atrHeader, 1, sizeof(atrHeader));
-#endif
+    uint32_t offset = fnio::fwrite(&atrHeader, 1, sizeof(atrHeader), f);
 
     // Write first three 128 uint8_t sectors
     uint8_t blank[512] = {0};
@@ -391,11 +339,7 @@ bool MediaTypeATR::create(FileHandler *f, uint16_t sectorSize, uint16_t numSecto
     {
         for (int i = 0; i < 3; i++)
         {
-#ifdef ESP_PLATFORM
-            size_t out = fwrite(blank, 1, 128, f);
-#else
-            size_t out = f->write(blank, 1, 128);
-#endif
+            size_t out = fnio::fwrite(blank, 1, 128, f);
             if (out != 128)
             {
                 Debug_printf("Error writing sector %d\r\n", i);
@@ -408,13 +352,8 @@ bool MediaTypeATR::create(FileHandler *f, uint16_t sectorSize, uint16_t numSecto
 
     // Write the rest of the sectors via sparse seek to the last sector
     offset += (numSectors * sectorSize) - sectorSize;
-#ifdef ESP_PLATFORM
-    fseek(f, offset, SEEK_SET);
-    size_t out = fwrite(blank, 1, sectorSize, f);
-#else
-    f->seek(offset, SEEK_SET);
-    size_t out = f->write(blank, 1, sectorSize);
-#endif
+    fnio::fseek(f, offset, SEEK_SET);
+    size_t out = fnio::fwrite(blank, 1, sectorSize, f);
 
     if (out != sectorSize)
     {

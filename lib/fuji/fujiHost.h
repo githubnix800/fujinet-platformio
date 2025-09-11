@@ -11,10 +11,9 @@ enum fujiHostType
     HOSTTYPE_UNINITIALIZED = 0,
     HOSTTYPE_LOCAL,
     HOSTTYPE_TNFS,
-#ifndef ESP_PLATFORM
     HOSTTYPE_SMB,
     HOSTTYPE_FTP,
-#endif
+    HOSTTYPE_HTTP,
 };
 
 class fujiHost
@@ -31,10 +30,9 @@ private:
 
     int mount_local();
     int mount_tnfs();
-#ifndef ESP_PLATFORM
     int mount_smb();
     int mount_ftp();
-#endif
+    int mount_http();
 
     int unmount_local();
     int unmount_fs();
@@ -51,6 +49,7 @@ public:
     void set_hostname(const char *hostname);
     const char* get_hostname(char *buffer, size_t buffersize);
     const char* get_hostname();
+    const char* get_basepath();
 
     bool mount();
     bool umount();
@@ -62,13 +61,15 @@ public:
 
     // File functions
     bool file_exists(const char *path);
-#ifdef ESP_PLATFORM
-    FILE * file_open(const char *path, char *fullpath, int fullpathlen, const char *mode);
-    long file_size(FILE *filehandle);
-#else
-    FileHandler * filehandler_open(const char *path, char *fullpath, int fullpathlen, const char *mode);
-    long file_size(FileHandler *filehandle);
+    fnFile * fnfile_open(const char *path, char *fullpath, int fullpathlen, const char *mode);
+#ifdef FNIO_IS_STDIO
+    // allow compilation of FILE* based fujiHost (all platforms except ATARI and APPLE)
+    FILE * file_open(const char *path, char *fullpath, int fullpathlen, const char *mode) {
+        return fnfile_open(path, fullpath, fullpathlen, mode);
+    }
 #endif
+    long file_size(fnFile *filehandle);
+
     bool file_remove(char *fullpath);
 
     // Directory functions

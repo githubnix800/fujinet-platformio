@@ -1,127 +1,215 @@
-#include <memory>
-#include <string>
-#include <cstring>
+#include <sstream>
+#include <iomanip>
 
 #include "hash.h"
+#include <mbedtls/version.h>
 
 Hash hasher;
 
-std::vector<uint8_t> Hash::hash_output(uint16_t m, char hash_mode, uint16_t& olen)
-{
-    std::vector<uint8_t> o(129, 0);
+Hash::Hash() {}
 
-    switch (hash_mode)
-    {
-    case 0: // MD5
-        olen = 16;
-
-        if (m == 0)
-            memcpy(o.data(), md5_output, 16);
-        else if (m == 1)
-        {
-            olen <<= 1;
-            for(int i = 0; i < 16; i++)
-                sprintf((char *)o.data() + i*2, "%02x", md5_output[i]);
-        }
-        break;
-    case 1: // SHA1
-        olen = 20;
-
-        if (m == 0)
-            memcpy(o.data(), sha1_output, 20);
-        else if (m == 1)
-        {
-            olen <<= 1;
-            for(int i = 0; i < 20; i++)
-                sprintf((char *)o.data() + i*2, "%02x", sha1_output[i]);
-        }
-        break;
-    case 2: // SHA256
-        olen = 32;
-
-        if (m == 0)
-            memcpy(o.data(), sha256_output, 32);
-        else if (m == 1)
-        {
-            olen <<= 1;
-            for(int i = 0; i < 32; i++)
-                sprintf((char *)o.data() + i*2, "%02x", sha256_output[i]);
-        }
-        break;
-    case 3: // SHA512
-        olen = 64;
-
-        if (m == 0)
-            memcpy(o.data(), sha512_output, 64);
-        else if (m == 1)
-        {
-            olen <<= 1;
-            for(int i = 0; i < 64; i++)
-                sprintf((char *)o.data() + i*2, "%02x", sha512_output[i]);
-        }
-        break;
-    }
-
-    return o;
+Hash::~Hash() {
+    clear();
 }
 
-void Hash::compute(uint16_t m, const std::string& data)
+Hash::Algorithm Hash::to_algorithm(uint8_t value) {
+    switch (value) {
+        case static_cast<uint8_t>(Algorithm::MD5):
+            return Hash::Algorithm::MD5;
+        case static_cast<uint8_t>(Algorithm::SHA1):
+            return Hash::Algorithm::SHA1;
+        case static_cast<uint8_t>(Algorithm::SHA256):
+            return Hash::Algorithm::SHA256;
+        case static_cast<uint8_t>(Algorithm::SHA512):
+            return Hash::Algorithm::SHA512;
+        default:
+            return Hash::Algorithm::UNKNOWN;
+    }
+}
+
+Hash::Algorithm Hash::from_string(std::string hash_name)
 {
-
-    // Initialize hash context
-    switch (m)
-    {
-    case 0: // md5
-        // Not implemented
-        break;
-    case 1: // sha1
-        mbedtls_sha1_init(&_sha1);
-        mbedtls_sha1_starts(&_sha1);
-        break;
-    case 2: // sha256
-        mbedtls_sha256_init(&_sha256);
-        mbedtls_sha256_starts(&_sha256, 0);
-        break;
-    case 3: // sha512
-        mbedtls_sha512_init(&_sha512);
-        mbedtls_sha512_starts(&_sha512, 0);
-        break;
+    if (hash_name == "MD5") {
+        return Hash::Algorithm::MD5;
+    } else if (hash_name == "SHA1") {
+        return Hash::Algorithm::SHA1;
+    } else if (hash_name == "SHA256") {
+        return Hash::Algorithm::SHA256;
+    } else if (hash_name == "SHA512") {
+        return Hash::Algorithm::SHA512;
+    } else {
+        return Hash::Algorithm::UNKNOWN;
     }
+}
 
-    // Update
-    switch (m)
-    {
-    case 0: // MD5
-        // Not implemented
-        break;
-    case 1: // SHA1
-        mbedtls_sha1_update(&_sha1, reinterpret_cast<const unsigned char*>(data.data()), data.size());
-        break;
-    case 2: // SHA256
-        mbedtls_sha256_update(&_sha256, reinterpret_cast<const unsigned char*>(data.data()), data.size());
-        break;
-    case 3: // SHA512
-        mbedtls_sha512_update(&_sha512, reinterpret_cast<const unsigned char*>(data.data()), data.size());
-        break;
-    }
+void Hash::add_data(const std::vector<uint8_t>& data) {
+    accumulated_data.insert(accumulated_data.end(), data.begin(), data.end());
+}
 
-    // Clean up
-    switch (m)
-    {
-    case 0: // MD5
-        // Not implemented
-        break;
-    case 1: // SHA1
-        mbedtls_sha1_finish(&_sha1, sha1_output);
-        mbedtls_sha1_free(&_sha1);
-        break;
-    case 2: // SHA256
-        mbedtls_sha256_finish(&_sha256, sha256_output);
-        mbedtls_sha256_free(&_sha256);
-        break;
-    case 3: // SHA512
-        mbedtls_sha512_finish(&_sha512, sha512_output);
-        mbedtls_sha512_free(&_sha512);
-        break;
+void Hash::add_data(const std::string& data) {
+    accumulated_data.insert(accumulated_data.end(), data.begin(), data.end());
+}
+
+void Hash::clear() {
+    accumulated_data.clear();
+}
+
+size_t Hash::hash_length(Algorithm algorithm, bool is_hex) const {
+    size_t length = 0;
+    switch (algorithm) {
+        case Algorithm::MD5:
+            length = 16;
+            break;
+        case Algorithm::SHA1:
+            length = 20;
+            break;
+        case Algorithm::SHA256:
+            length = 32;
+            break;
+        case Algorithm::SHA512:
+            length = 64;
+            break;
+        default:
+            return 0;
     }
+    return is_hex ? length * 2 : length;
+}
+
+void Hash::compute(Algorithm algorithm, bool clear_data) {
+    hash_output.clear();
+    switch (algorithm) {
+        case Algorithm::SHA1:
+            compute_sha1();
+            break;
+        case Algorithm::SHA256:
+            compute_sha256();
+            break;
+        case Algorithm::SHA512:
+            compute_sha512();
+            break;
+        default:
+            break;
+    }
+    if (clear_data) {
+        clear();
+    }
+}
+
+std::vector<uint8_t> Hash::output_binary() const {
+    return hash_output;
+}
+
+std::string Hash::output_hex() const {
+    return bytes_to_hex(hash_output);
+}
+
+void Hash::compute_sha1() {
+    mbedtls_sha1_context ctx;
+    mbedtls_sha1_init(&ctx);
+    
+    hash_output.resize(20);
+    
+#if MBEDTLS_VERSION_NUMBER >= 0x02070000 && MBEDTLS_VERSION_NUMBER < 0x03000000
+    int err = 0;
+
+    // Use newer API that returns status code
+    if ((err = mbedtls_sha1_starts_ret(&ctx)) != 0) {
+        mbedtls_sha1_free(&ctx);
+        return; // Handle error appropriately
+    }
+    
+    if ((err = mbedtls_sha1_update_ret(&ctx, accumulated_data.data(), accumulated_data.size())) != 0) {
+        mbedtls_sha1_free(&ctx);
+        return; // Handle error appropriately
+    }
+    
+    if ((err = mbedtls_sha1_finish_ret(&ctx, hash_output.data())) != 0) {
+        mbedtls_sha1_free(&ctx);
+        return; // Handle error appropriately
+    }
+#else
+    // Use legacy API
+    mbedtls_sha1_starts(&ctx);
+    mbedtls_sha1_update(&ctx, accumulated_data.data(), accumulated_data.size());
+    mbedtls_sha1_finish(&ctx, hash_output.data());
+#endif
+    
+    mbedtls_sha1_free(&ctx);
+}
+
+void Hash::compute_sha256() {
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    
+    hash_output.resize(32);
+    
+#if MBEDTLS_VERSION_NUMBER >= 0x02070000 && MBEDTLS_VERSION_NUMBER < 0x03000000
+    int err = 0;
+
+    // Use newer API that returns status code
+    if ((err = mbedtls_sha256_starts_ret(&ctx, 0)) != 0) {
+        mbedtls_sha256_free(&ctx);
+        return; // Handle error appropriately
+    }
+    
+    if ((err = mbedtls_sha256_update_ret(&ctx, accumulated_data.data(), accumulated_data.size())) != 0) {
+        mbedtls_sha256_free(&ctx);
+        return; // Handle error appropriately
+    }
+    
+    if ((err = mbedtls_sha256_finish_ret(&ctx, hash_output.data())) != 0) {
+        mbedtls_sha256_free(&ctx);
+        return; // Handle error appropriately
+    }
+#else
+    // Use legacy API
+    mbedtls_sha256_starts(&ctx, 0);
+    mbedtls_sha256_update(&ctx, accumulated_data.data(), accumulated_data.size());
+    mbedtls_sha256_finish(&ctx, hash_output.data());
+#endif
+    
+    mbedtls_sha256_free(&ctx);
+}
+
+void Hash::compute_sha512() {
+    mbedtls_sha512_context ctx;
+    mbedtls_sha512_init(&ctx);
+    
+    hash_output.resize(64);
+    
+#if MBEDTLS_VERSION_NUMBER >= 0x02070000 && MBEDTLS_VERSION_NUMBER < 0x03000000
+    int err = 0;
+
+    // Use newer API that returns status code
+    if ((err = mbedtls_sha512_starts_ret(&ctx, 0)) != 0) {
+        mbedtls_sha512_free(&ctx);
+        return; // Handle error appropriately
+    }
+    
+    if ((err = mbedtls_sha512_update_ret(&ctx, accumulated_data.data(), accumulated_data.size())) != 0) {
+        mbedtls_sha512_free(&ctx);
+        return; // Handle error appropriately
+    }
+    
+    if ((err = mbedtls_sha512_finish_ret(&ctx, hash_output.data())) != 0) {
+        mbedtls_sha512_free(&ctx);
+        return; // Handle error appropriately
+    }
+#else
+    // Use legacy API
+    mbedtls_sha512_starts(&ctx, 0);
+    mbedtls_sha512_update(&ctx, accumulated_data.data(), accumulated_data.size());
+    mbedtls_sha512_finish(&ctx, hash_output.data());
+#endif
+    
+    mbedtls_sha512_free(&ctx);
+}
+
+std::string Hash::bytes_to_hex(const std::vector<uint8_t>& bytes) const {
+    std::stringstream hex_stream;
+    hex_stream << std::hex << std::setfill('0');
+    for (auto byte : bytes) {
+        hex_stream << std::setw(2) << static_cast<int>(byte);
+    }
+    return hex_stream.str();
 }

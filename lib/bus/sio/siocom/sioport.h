@@ -26,12 +26,14 @@ public:
     virtual void set_proceed(bool level) = 0;
     virtual void set_interrupt(bool level) = 0;
 
+    virtual void bus_idle(uint16_t ms) = 0;
+
     virtual int available() = 0;
     virtual void flush() = 0;
     virtual void flush_input() = 0;
 
     virtual int read() = 0; // read single byte
-    virtual size_t read(uint8_t *buffer, size_t length, bool command_mode=false) = 0; // read bytes into buffer
+    virtual size_t read(uint8_t *buffer, size_t length) = 0; // read bytes into buffer
 
     virtual ssize_t write(uint8_t b) = 0; // write single byte
     virtual ssize_t write(const uint8_t *buffer, size_t size) = 0; // write buffer
