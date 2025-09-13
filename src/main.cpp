@@ -11,17 +11,17 @@
 #endif
 
 #include "debug.h"
-#include "../bus/bus.h"
+#include "bus.h"
 #include "device.h"
 #ifdef ESP_PLATFORM
   #include "keys.h"
 #endif
 #include "led.h"
 #include "crypt.h"
-#include "../modem/modem.h"
+#include "modem.h"
 
 #include "fnSystem.h"
-#include "../config/fnConfig.h"
+#include "fnConfig.h"
 #include "fnWiFi.h"
 
 #include "fsFlash.h"

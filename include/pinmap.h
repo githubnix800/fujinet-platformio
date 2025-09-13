@@ -34,12 +34,11 @@
 
 #ifndef PIN_DEBUG
 #define PIN_DEBUG		PIN_IEC_SRQ
-#endif
+#endif // PIN_DEBUG
 
 #endif // ESP_PLATFORM
 
 #include "pinmap/lolind32pro.h"
 #include "pinmap/fujinet-esp32-wrover-ie-8mb.h"
 
-#endif /* ESP_PLATFORM */
 #endif /* PINMAP_H */
